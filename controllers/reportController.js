@@ -211,5 +211,75 @@ const getSalesSummary = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+// controllers/reportController.js
 
-module.exports = { getSalesSummary };
+
+const getStartOfDay = (date, offsetDays = 0) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - offsetDays);
+  return d;
+};
+
+
+const getTopProductsByPeriod = async (req, res) => {
+  try {
+    const period = req.query.period;
+    if (!period || !["daily", "weekly", "monthly", "yearly"].includes(period)) {
+      return res.status(400).json({ message: "Invalid or missing period" });
+    }
+    const now = new Date();
+    let fromDate;
+
+    switch (period) {
+      case "daily":
+        fromDate = getStartOfDay(now);
+        break;
+      case "weekly":
+        fromDate = getStartOfDay(now, 6); // last 7 days including today
+        break;
+      case "monthly":
+        fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case "yearly":
+        fromDate = new Date(now.getFullYear(), 0, 1);
+        break;
+    }
+
+    const toDate = new Date();
+    toDate.setHours(23, 59, 59, 999);
+
+    const topProducts = await Order.aggregate([
+      { $match: { date: { $gte: fromDate, $lte: toDate } } },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: "$items.name",
+          price: { $first: "$items.price" },
+          sales: { $sum: "$items.quantity" },
+          revenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
+        }
+      },
+      { $sort: { sales: -1 } },
+      { $limit: 10 }
+    ]);
+
+    res.json({
+      period,
+      products: topProducts.map(p => ({
+        name: p._id,
+        price: p.price,
+        sales: p.sales,
+        revenue: p.revenue,
+      })),
+    });
+  } catch (error) {
+    console.error("Error fetching top products:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
+module.exports = { getSalesSummary , getTopProductsByPeriod, };
