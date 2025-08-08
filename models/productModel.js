@@ -4,9 +4,11 @@ const { Subcategory } = require("./subcategoryModel");
 
 const ProductSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
+    name: { type: String, required: true , unique: true , trim: true},
     quantity: { type: Number, required: true },
     price: { type: Number, required: true },
+    barcode: { type: String, required: true , unique: true, trim: true},
+    sellingPrice: { type: Number, required: true },
     categoryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",

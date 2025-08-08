@@ -3,7 +3,7 @@ const { Products } = require("../models/productModel");
 
 const createOrder = async (req, res) => {
   try {
-    const { userName, userPhone, date, items, totalPrice, paymentMethod } =
+    const { userName, userPhone, cashierId, cashierName ,date, items, totalPrice, paymentMethod } =
       req.body;
 
     console.log("Order data received:", req.body); // Debug log
@@ -11,6 +11,8 @@ const createOrder = async (req, res) => {
     if (
       !userName ||
       !userPhone ||
+      !cashierId ||
+      !cashierName ||
       !date ||
       !items?.length ||
       !totalPrice ||
@@ -21,7 +23,9 @@ const createOrder = async (req, res) => {
 
     const order = new Order({
       userName,
-      userPhone, // SAVE PHONE
+      userPhone,
+      cashierId,
+      cashierName, // SAVE PHONE
       date,
       items,
       totalPrice,

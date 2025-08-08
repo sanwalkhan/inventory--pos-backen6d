@@ -50,7 +50,8 @@ const getOrdersCount = async () => {
 };
 
 const getInventoryItemsCount = async () => {
-  return Products.countDocuments();
+  const count = await Products.countDocuments({ quantity: { $gt: 0 } });
+  return count;
 };
 
 const adminDashboardStats = async (req, res) => {

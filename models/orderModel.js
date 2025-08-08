@@ -13,7 +13,9 @@ const OrderItemSchema = new mongoose.Schema({
 
 const OrderSchema = new mongoose.Schema({
   userName: { type: String, required: true },
-  userPhone: { type: String, required: true }, // ✅ ADDED userPhone
+  userPhone: { type: String, required: true },
+  cashierId: { type: String, required: true },
+  cashierName: { type: String, required: true }, // ✅ ADDED userPhone
   date: { type: Date, required: true },
   items: [OrderItemSchema],
   totalPrice: { type: Number, required: true },

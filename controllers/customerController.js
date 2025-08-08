@@ -1,4 +1,11 @@
 const { Customer } = require("../models/customerModel");
+const { Products } = require("../models/productModel");
+const { Order } = require("../models/orderModel");
+const { RefundPassword } = require("../models/refundPasswordModel");
+const bcrypt = require("bcrypt");
+
+// Environment variable or constant password for refund - change secret for production
+// bcrypt hash of 'supersecret' for example
 
 // Upsert customer: add a new order or create new customer
 const customer = async (req, res) => {
@@ -72,8 +79,148 @@ const getCustomerById = async (req, res) => {
   }
 };
 
+// Refund controller
+// Body: { customerId, orderDate, refundItems: [{ productId, quantity }], password }
+const refund = async (req, res) => {
+  try {
+    const { customerId, orderDate, refundItems, password } = req.body;
+
+    if (
+      !customerId ||
+      !orderDate ||
+      !refundItems ||
+      !Array.isArray(refundItems) ||
+      refundItems.length === 0 ||
+      !password
+    ) {
+      return res.status(400).json({ error: "Missing or invalid refund data" });
+    }
+
+    // Fetch stored refund password hash from DB
+    const storedPwdRecord = await RefundPassword.findOne();
+    if (!storedPwdRecord) {
+      return res.status(500).json({ error: "Refund password not configured" });
+    }
+
+    // Verify refund password
+    const isPasswordValid = await bcrypt.compare(password, storedPwdRecord.passwordHash);
+    if (!isPasswordValid) {
+      return res.status(403).json({ error: "Invalid password for refund" });
+    }
+
+    // Fetch Customer document
+    const customer = await Customer.findById(customerId);
+    if (!customer) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    // Safer date comparison
+    const targetOrderDate = new Date(orderDate).getTime();
+
+    // Find embedded order in Customer.purchaseHistory
+    const custOrderIndex = customer.purchaseHistory.findIndex(
+      (order) => new Date(order.orderDate).getTime() === targetOrderDate
+    );
+    if (custOrderIndex === -1) {
+      return res.status(404).json({ error: "Order not found in customer history" });
+    }
+    const custOrder = customer.purchaseHistory[custOrderIndex];
+
+    // 
+    const order = await Order.findOne({
+      userPhone: customer.phone,
+      date: { $gte: new Date(targetOrderDate - 1000), $lte: new Date(targetOrderDate + 1000) }, // small buffer
+    });
+    if (!order) {
+      return res.status(404).json({ error: "Order document not found" });
+    }
+
+    // Map items for quick lookup
+    const custOrderItemsMap = new Map(custOrder.items.map((item) => [item.productId.toString(), item]));
+    const orderItemsMap = new Map(order.items.map((item) => [item.productId.toString(), item]));
+
+    // Validate refund items
+    for (const refundItem of refundItems) {
+      const { productId, quantity } = refundItem;
+
+      if (!productId || !quantity || quantity <= 0) {
+        return res.status(400).json({ error: "Invalid refund item data" });
+      }
+
+      const custOrderItem = custOrderItemsMap.get(productId);
+      const orderItem = orderItemsMap.get(productId);
+
+      if (!custOrderItem || !orderItem) {
+        return res.status(400).json({ error: `Product ${productId} not found in order` });
+      }
+      if (quantity > custOrderItem.quantity || quantity > orderItem.quantity) {
+        return res.status(400).json({
+          error: `Refund quantity exceeds purchased quantity for product ${productId}`,
+        });
+      }
+    }
+
+    // Process refund on both Customer embedded order and Order document
+    for (const refundItem of refundItems) {
+      const { productId, quantity } = refundItem;
+
+      // Update customer purchaseHistory items
+      const custOrderItem = custOrderItemsMap.get(productId);
+      custOrderItem.quantity -= quantity;
+
+      if (custOrderItem.quantity === 0) {
+        custOrder.items = custOrder.items.filter((i) => i.productId.toString() !== productId);
+      }
+
+      // Update Order document items
+      const orderItem = orderItemsMap.get(productId);
+      orderItem.quantity -= quantity;
+
+      if (orderItem.quantity === 0) {
+        order.items = order.items.filter((i) => i.productId.toString() !== productId);
+      }
+
+      // Update product stock quantity
+      const product = await Products.findById(productId);
+      if (!product) {
+        return res.status(404).json({ error: `Product ${productId} not found in inventory` });
+      }
+      product.quantity += quantity;
+      await product.save();
+    }
+
+    // Remove empty order from Customer purchaseHistory
+    if (custOrder.items.length === 0) {
+      customer.purchaseHistory.splice(custOrderIndex, 1);
+      customer.purchaseCount = Math.max(0, customer.purchaseCount - 1);
+    } else {
+      customer.purchaseHistory[custOrderIndex] = custOrder;
+    }
+
+    // Mark purchaseHistory modified for mongoose tracking
+    customer.markModified("purchaseHistory");
+
+    // Save Customer document
+    await customer.save();
+
+    // Optionally, recalculate totalPrice on Order document if you want
+    // Example:
+    order.totalPrice = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+    // Save Order document
+    await order.save();
+
+    return res.json({ message: "Refund processed successfully", customer, order });
+  } catch (err) {
+    console.error("🔥 Refund processing error:", err);
+    return res.status(500).json({ error: "Server error while processing refund" });
+  }
+};
+
+
 module.exports = {
   customer,
   getCustomers,
   getCustomerById,
+  refund,
 };
