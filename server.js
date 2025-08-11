@@ -4,6 +4,8 @@ const bodyParser = require("body-parser");
 const cron = require("node-cron");
 require("dotenv").config({ path: ".env" });
 require("./models/dbConnection");
+const http = require("http"); // For WebSocket
+const { Server } = require("socket.io");
 
 // Import Routes
 const authRouter = require("./routes/authRoutes");
@@ -30,18 +32,8 @@ const port = process.env.PORT;
 // Middleware
 app.use(bodyParser.json());
 const allowedOrigins = ["http://localhost:5173", "http://localhost:5174"];
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-  })
-);
+ app.use(cors({ origin: true, credentials: true }));
+
 
 // Routes
 app.use("/api", authRouter);
@@ -62,14 +54,46 @@ app.use("/api", cashierDashboardRouter);
 app.use("/api", mailrouter);
 
 // Schedule: Run every day at 12 AM Pakistan time
-cron.schedule("0 0 * * *", async () => {
-  console.log("Running Daily Sales Report Job at", new Date().toLocaleString("en-PK", { timeZone: "Asia/Karachi" }));
-  await sendDailySalesReportEmail();
-}, {
-  timezone: "Asia/Karachi"
+cron.schedule(
+  "0 0 * * *",
+  async () => {
+    console.log(
+      "Running Daily Sales Report Job at",
+      new Date().toLocaleString("en-PK", { timeZone: "Asia/Karachi" })
+    );
+    await sendDailySalesReportEmail();
+  },
+  {
+    timezone: "Asia/Karachi",
+  }
+);
+
+// --- WebSocket Setup ---
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 });
 
-// Start Server
-app.listen(port, () => {
+io.on("connection", (socket) => {
+  console.log("A client connected:", socket.id);
+
+  // Example test event
+  socket.on("ping", (msg) => {
+    console.log("Ping received:", msg);
+    socket.emit("pong", "Hello from server!");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
+});
+
+// Start Server with WebSocket
+server.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });

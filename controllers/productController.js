@@ -50,12 +50,13 @@ const addProduct = async (req, res) => {
       barcode,
       categoryId,
       subcategoryId,
+      description,
       saleTax = 0,
       withholdingTax = 0,
       gst = 0,
     } = req.body;
 
-    if (!name || !quantity || !price || !barcode || !categoryId || !subcategoryId || !req.file) {
+    if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId || !req.file) {
       return res.status(400).json({ message: "All fields including image are required" });
     }
 
@@ -92,6 +93,7 @@ const addProduct = async (req, res) => {
       barcode: normalizedBarcode,
       categoryId,
       subcategoryId,
+      description,
       saleTax: parseFloat(saleTax),
       withholdingTax: parseFloat(withholdingTax),
       gst: parseFloat(gst),
@@ -120,12 +122,13 @@ const updateProduct = async (req, res) => {
       barcode,
       categoryId,
       subcategoryId,
+      description,
       saleTax = 0,
       withholdingTax = 0,
       gst = 0,
     } = req.body;
 
-    if (!name || !quantity || !price || !barcode || !categoryId || !subcategoryId) {
+    if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
@@ -171,6 +174,7 @@ const updateProduct = async (req, res) => {
       barcode: normalizedBarcode,
       categoryId,
       subcategoryId,
+      description,
       saleTax: parseFloat(saleTax),
       withholdingTax: parseFloat(withholdingTax),
       gst: parseFloat(gst),
