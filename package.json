@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "concurrently \"nodemon server.js\" \"cd ../frontend_React && npm run dev\""
+    "start": "nodemon server.js"
   },
   "keywords": [],
   "author": "",
