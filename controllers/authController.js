@@ -56,10 +56,7 @@ const loginController = async (req, res) => {
     return res.status(200).json({
       message: `User logged in successfully with role ${role} and name ${user.username}`,
       token,
-      userId: user._id,
-      name: user.username,
-      role: user.role,
-      email: user.email,
+      userId: user._id
     });
   } catch (err) {
     console.error("Login error:", err);

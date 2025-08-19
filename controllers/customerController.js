@@ -129,7 +129,7 @@ const refund = async (req, res) => {
     // 
     const order = await Order.findOne({
       userPhone: customer.phone,
-      date: { $gte: new Date(targetOrderDate - 1000), $lte: new Date(targetOrderDate + 1000) }, // small buffer
+      // small buffer
     });
     if (!order) {
       return res.status(404).json({ error: "Order document not found" });

@@ -9,7 +9,7 @@ const {
   getProductsBySubCategory,
   getProductsModel,
   getproductByname,
-  getProductByBarcode
+ getProductByBarcode
 } = require("../controllers/productController");
 
 productRouter.get("/products", getProducts);
@@ -18,7 +18,6 @@ productRouter.post("/products", upload.single("image"), addProduct);  // POST wi
 productRouter.delete("/products/:id", deleteProduct);
 productRouter.get("/products/search", getproductByname);
 productRouter.get("/products/barcode", getProductByBarcode);
-
 productRouter.put("/products/:id", upload.single("image"), updateProduct);  // PUT with optional image upload
 productRouter.get(
   "/productsSubcategories",

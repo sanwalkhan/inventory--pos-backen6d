@@ -296,6 +296,7 @@ const getProductBycategory = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+// Backend - change route and parameter access
 const getProductByBarcode = async (req, res) => {
   try {
     const { barcode } = req.query;
@@ -322,6 +323,11 @@ const getProductByBarcode = async (req, res) => {
 };
 
 
+
+// Change route to not expect URL parameter
+
+
+
 module.exports = {
   getProducts,
   addProduct,
@@ -332,5 +338,4 @@ module.exports = {
   getproductByname,
   getProductBycategory,
   getProductByBarcode
-
 };
