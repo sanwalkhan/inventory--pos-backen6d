@@ -5,7 +5,7 @@ const User = require("../models/userModel");
 const getAllUsers = async (req, res) => {
   try {
     console.log("👉 Fetching all users");
-      const users = await User.find({ role: "cashier" }).select("-password -__v");
+      const users = await User.find({ role: { $in: ["cashier", "manager", "supervisor"] } }).select("-password -__v");
     console.log("✅ Users fetched:", users.length);
     res.status(200).json({ users });
   } catch (error) {
@@ -15,29 +15,37 @@ const getAllUsers = async (req, res) => {
 };
 
 // Update user info with optional password hashing
+// Updating user with activation state and permissions
 const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    const { username, email, password, role } = req.body;
+    console.log("req.body", req.body);
 
-    // Prepare update data with only provided fields
-    const updateData = { username, email, role };
+    const { username, email, password, role, active, permissions, refundPassword } = req.body;
 
-    // Remove undefined fields from updateData
-    Object.keys(updateData).forEach(
-      (key) => updateData[key] === undefined && delete updateData[key]
-    );
+    // Build update object dynamically
+    const updateData = { username, email, role, active, permissions };
 
-    // If password provided, hash it
+    // Hash new password if provided
     if (password) {
       const salt = await bcrypt.genSalt(10);
       updateData.password = await bcrypt.hash(password, salt);
     }
 
+    // Hash refund password if provided
+    if (refundPassword) {
+      const salt = await bcrypt.genSalt(10);
+      updateData.refundPassword = await bcrypt.hash(refundPassword, salt);
+    }
+
+    // Remove undefined values
+    Object.keys(updateData).forEach((key) => updateData[key] === undefined && delete updateData[key]);
+
+    // Update user in DB
     const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
       new: true,
       runValidators: true,
-    }).select("-password -__v");
+    }).select("-password -__v -refundPassword"); // exclude sensitive fields
 
     if (!updatedUser) {
       return res.status(404).json({ message: "User not found." });
@@ -49,6 +57,8 @@ const updateUser = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+
 
 // Add new user with password hashing
 const addUser = async (req, res) => {
@@ -114,6 +124,8 @@ const getcurrentUser = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+
 
 module.exports = {
   getAllUsers,

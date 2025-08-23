@@ -1,7 +1,7 @@
 const { Customer } = require("../models/customerModel");
 const { Products } = require("../models/productModel");
 const { Order } = require("../models/orderModel");
-const { RefundPassword } = require("../models/refundPasswordModel");
+const Users = require("../models/userModel")
 const bcrypt = require("bcrypt");
 
 // Environment variable or constant password for refund - change secret for production
@@ -83,7 +83,10 @@ const getCustomerById = async (req, res) => {
 // Body: { customerId, orderDate, refundItems: [{ productId, quantity }], password }
 const refund = async (req, res) => {
   try {
-    const { customerId, orderDate, refundItems, password } = req.body;
+    const {userId, customerId, orderDate, refundItems, password } = req.body;
+    const userdata = await Users.findById(userId);
+    const hashedpwd = userdata.refundPassword;
+
 
     if (
       !customerId ||
@@ -96,14 +99,13 @@ const refund = async (req, res) => {
       return res.status(400).json({ error: "Missing or invalid refund data" });
     }
 
-    // Fetch stored refund password hash from DB
-    const storedPwdRecord = await RefundPassword.findOne();
-    if (!storedPwdRecord) {
+
+    if (!hashedpwd) {
       return res.status(500).json({ error: "Refund password not configured" });
     }
 
     // Verify refund password
-    const isPasswordValid = await bcrypt.compare(password, storedPwdRecord.passwordHash);
+    const isPasswordValid = await bcrypt.compare(password, hashedpwd);
     if (!isPasswordValid) {
       return res.status(403).json({ error: "Invalid password for refund" });
     }
@@ -205,7 +207,18 @@ const refund = async (req, res) => {
 
     // Optionally, recalculate totalPrice on Order document if you want
     // Example:
-    order.totalPrice = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    order.totalPrice = order.items.reduce((sum, item) => {
+  const price = Number(item.sellingPrice);
+  const qty = Number(item.quantity);
+
+  if (isNaN(price) || isNaN(qty)) {
+    console.warn(`Invalid price or quantity detected for product ${item.productId}: price=${item.price}, qty=${item.quantity}`);
+    return sum; // skip invalid item
+  }
+
+  return sum + price * qty;
+}, 0);
+
 
     // Save Order document
     await order.save();
