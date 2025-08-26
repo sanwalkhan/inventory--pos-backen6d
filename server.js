@@ -27,6 +27,7 @@ const mailrouter = require("./routes/dailyReportMail");
 const { sendDailySalesReportEmail } = require("./controllers/dailyReportMail");
 const managerrouter = require("./routes/managerRoutes");
 const managerSettingRouter = require("./routes/managerSettingRoutes");
+const themeRouter = require("./routes/themeRoutes");
 
 const app = express();
 const port = process.env.PORT;
@@ -56,6 +57,8 @@ app.use("/api", cashierDashboardRouter);
 app.use("/api", mailrouter);
 app.use("/api", managerrouter)
 app.use("/api",managerSettingRouter);
+app.use("/api",themeRouter);
+
 
 // Schedule: Run every day at 12 AM Pakistan time
 cron.schedule(
