@@ -24,7 +24,7 @@ const authController = async (req, res) => {
 
 const loginController = async (req, res) => {
   try {
-    const { email, password, role } = req.body;
+    const { email, password } = req.body;
     if (!email || !password) {
       return res
         .status(400)
@@ -42,26 +42,22 @@ const loginController = async (req, res) => {
       return res.status(400).json({ message: "Password does not match" });
     }
 
-    if (user.role !== role) {
-      return res.status(400).json({ message: "Incorrect role" });
-    }
-
-    // ✅ Only include safe user data in token
+    // No need to provide role from frontend; get from database
     const token = jwt.sign(
-      { userId: user._id, name: user.name, role: user.role , email: user.email},
+      { userId: user._id, name: user.name, role: user.role, email: user.email },
       jwtConfig.secret,
       { expiresIn: jwtConfig.expire }
     );
 
     return res.status(200).json({
-      message: `User logged in successfully with role ${role} and name ${user.username}`,
+      message: `User logged in successfully with role ${user.role} and name ${user.username}`,
       token,
-      userId: user._id
+      userId: user._id,
+      role: user.role
     });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 module.exports = { authController, loginController };

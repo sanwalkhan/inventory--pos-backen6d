@@ -15,6 +15,12 @@ const ThemeSchema = new mongoose.Schema({
   buttonTextColor: { type: String, default: '#ffffff' },
   buttonHoverBackground: { type: String, default: '#2563eb' },
   buttonHoverTextColor: { type: String, default: '#d1d5db' },
+  sidebarBackground: { type: String, default: '#ffffff' },
+  sidebarLinkColor: { type: String, default: '#000000' },
+  sidebarLinkHoverColor: { type: String, default: '#ffffff' },
+  sidebarLinkHoverBackground: { type: String, default: '#3b82f6' },
+  sidebarActiveBackground: { type: String, default: '#2563eb' },
+  sidebarActiveLinkColor: { type: String, default: '#ffffff' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Theme', ThemeSchema);

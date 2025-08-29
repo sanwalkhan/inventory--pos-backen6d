@@ -6,36 +6,37 @@ const mongoose = require('mongoose');
 exports.createSupplier = async (req, res) => {
   try {
     const { name, email, mobile, address } = req.body;
-    
-    // Check if supplier with email already exists
+    console.log("📩 Incoming body:", req.body);
+
     const existingSupplier = await Supplier.findOne({ email });
-    if (existingSupplier) {
-      return res.status(400).json({ 
-        error: 'Supplier with this email already exists' 
-      });
+    const existingPhone = await Supplier.findOne({ mobile });
+
+    if (existingSupplier || existingPhone) {
+      return res.status(400).json({ error: "Supplier with this email or phone already exists" });
     }
 
     const supplier = new Supplier({
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
-      mobile: mobile.trim(),
+      name: name?.trim(),
+      email: email?.toLowerCase().trim(),
+      mobile: mobile?.trim(),
       address: address?.trim()
     });
 
     await supplier.save();
-    res.status(201).json({
-      message: 'Supplier created successfully',
-      supplier
-    });
+    res.status(201).json({ message: "Supplier created successfully", supplier });
   } catch (err) {
+    console.error("❌ Supplier creation error:", err);   // 👈 this line is key
     if (err.code === 11000) {
-      return res.status(400).json({ 
-        error: 'Supplier with this email already exists' 
-      });
+      return res.status(400).json({ error: "Supplier with this email already exists" });
+    }
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({ error: messages.join(", ") });
     }
     res.status(400).json({ error: err.message });
   }
 };
+
 
 // Get all suppliers with optional search and pagination
 exports.getSuppliers = async (req, res) => {

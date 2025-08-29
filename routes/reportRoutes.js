@@ -5,12 +5,13 @@ const {
   getSalesByDateRange,
   getProductSalesOverview,
   getBestProductByDate,
+  getProductsSoldBetweenDates,
 } = require("../controllers/reportController");
 
 reportRouter.get("/SalesReports", getSalesSummary);
 reportRouter.get("/TopProducts", getTopProductsByPeriod);
 reportRouter.get("/SalesByDateRange", getSalesByDateRange);
 reportRouter.get("/ProductSalesOverview", getProductSalesOverview);
-reportRouter.get("/BestProductByDate", getBestProductByDate);
+reportRouter.get("/ProductSalesByDateRange", getProductsSoldBetweenDates);
 
 module.exports = reportRouter;

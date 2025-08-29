@@ -450,10 +450,68 @@ const getBestProductByDate = async (req, res) => {
   }
 };
 
+const getProductsSoldBetweenDates = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) {
+      return res.status(400).json({ message: "Both 'from' and 'to' dates are required" });
+    }
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    toDate.setHours(23, 59, 59, 999);
+
+    if (fromDate > toDate) {
+      return res.status(400).json({ message: "'From' date cannot be after 'to' date" });
+    }
+
+    // All products for reference (name, price, barcode, etc.)
+    const allProducts = await Products.find({}, { name: 1, sellingPrice: 1, barcode: 1 }).lean();
+
+    // Aggregate totalSold for each product in date range
+    const salesAgg = await Order.aggregate([
+      { $match: { date: { $gte: fromDate, $lte: toDate } } },
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: "$items.name",
+          totalSold: { $sum: "$items.quantity" },
+        }
+      }
+    ]);
+
+    // Map product name to totalSold for quick lookup
+    const salesMap = {};
+    salesAgg.forEach((s) => {
+      salesMap[s._id] = s.totalSold;
+    });
+
+    // Combine with all products (to include unsold products in range)
+    const result = allProducts.map((prod) => ({
+      name: prod.name,
+      price: prod.sellingPrice,
+      barcode: prod.barcode,
+      totalSold: salesMap[prod.name] || 0,
+    }));
+
+    console.log(result);
+    // Optionally, you can also sort by totalSold here or let the frontend do it.
+    // result.sort((a, b) => b.totalSold - a.totalSold);
+
+    res.json({
+      from: fromDate,
+      to: toDate,
+      products: result,
+    });
+  } catch (error) {
+    console.error("Error in getProductsSoldBetweenDates:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
 module.exports = {
   getSalesSummary,
   getTopProductsByPeriod,
   getSalesByDateRange,
   getProductSalesOverview,
   getBestProductByDate,
+  getProductsSoldBetweenDates,
 };
