@@ -24,6 +24,7 @@ const authController = async (req, res) => {
 
 const loginController = async (req, res) => {
   try {
+    console.log("Request body:", req.body);
     const { email, password } = req.body;
     if (!email || !password) {
       return res

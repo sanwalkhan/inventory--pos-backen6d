@@ -6,6 +6,20 @@ require("dotenv").config({ path: ".env" });
 require("./models/dbConnection");
 const http = require("http"); // For WebSocket
 const { Server } = require("socket.io");
+const {PeerServer} = require('peer');
+
+const peerServer = PeerServer({
+  port: 9000,
+  path: '/peerjs',
+  allow_discovery: true,
+  debug: true,
+  corsOptions: {
+    origin: [
+      process.env.FRONTEND_URL || 'http://localhost:5173'
+    ],
+    credentials: true
+  }
+});
 
 // Import Routes
 const authRouter = require("./routes/authRoutes");
@@ -31,6 +45,7 @@ const themeRouter = require("./routes/themeRoutes");
 const cashierRouter = require("./routes/cashierRoutes");
 const supervisorRouter = require("./routes/supervisorRoutes");
 const resetPasswordRouter = require("./routes/ResetPasswordRoutes");
+
 
 const app = express();
 const port = process.env.PORT;
@@ -64,6 +79,7 @@ app.use("/api",themeRouter);
 app.use("/api",cashierRouter);
 app.use("/api",supervisorRouter);
 app.use("/api",resetPasswordRouter);
+
 
 
 // Schedule: Run every day at 12 AM Pakistan time
@@ -101,9 +117,35 @@ io.on("connection", (socket) => {
     socket.emit("pong", "Hello from server!");
   });
 
+    console.log("A client connected:", socket.id);
+
+
+
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
   });
+});
+
+peerServer.on('connection', (client) => {
+  console.log('PeerJS client connected:', client.getId());
+});
+
+peerServer.on('disconnect', (client) => {
+  console.log('PeerJS client disconnected:', client.getId());
+});
+
+peerServer.on('error', (error) => {
+  console.error('PeerJS server error:', error);
+});
+
+// Start the server
+console.log('PeerJS server running on port 9000');
+console.log('WebSocket endpoint: ws://localhost:9000/peerjs');
+
+// Keep the process running
+process.on('SIGINT', () => {
+  console.log('\nShutting down PeerJS server...');
+  process.exit(0);
 });
 
 // Start Server with WebSocket

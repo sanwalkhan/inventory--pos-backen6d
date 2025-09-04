@@ -1,12 +1,10 @@
 const CashierSession = require('../models/cashierModel');
-const {Order} = require('../models/orderModel');
-
+const { Order } = require('../models/orderModel');
 const User = require('../models/userModel');
 
-// Check in cashier
+// Enhanced check in with screen sharing preparation
 exports.checkIn = async (req, res) => {
   try {
-
     const { cashierId } = req.body;
 
     if (!cashierId) {
@@ -18,7 +16,6 @@ exports.checkIn = async (req, res) => {
 
     // Get cashier details
     const cashier = await User.findById(cashierId).select('username email');
-    console.log("cashier",cashier)
     if (!cashier) {
       return res.status(404).json({
         success: false,
@@ -39,24 +36,28 @@ exports.checkIn = async (req, res) => {
       return res.status(200).json({
         success: true,
         message: 'Already checked in',
-        session: existingSession
+        session: existingSession,
+        screenShareEnabled: true
       });
     }
 
-    // Create new session
+    // Create new session with screen sharing flag
     const newSession = new CashierSession({
       cashierId,
       cashierName: cashier.username,
       checkInTime: new Date(),
-      sessionDate: today
+      sessionDate: today,
+      screenShareEnabled: true,
+      autoScreenShareRequested: true
     });
 
     await newSession.save();
 
     res.status(201).json({
       success: true,
-      message: 'Checked in successfully',
-      session: newSession
+      message: 'Checked in successfully. Screen sharing will start automatically.',
+      session: newSession,
+      screenShareEnabled: true
     });
 
   } catch (error) {
@@ -69,7 +70,7 @@ exports.checkIn = async (req, res) => {
   }
 };
 
-// Check out cashier
+// Enhanced check out with screen sharing cleanup
 exports.checkOut = async (req, res) => {
   try {
     const { cashierId } = req.body;
@@ -124,13 +125,15 @@ exports.checkOut = async (req, res) => {
     activeSession.status = 'completed';
     activeSession.totalSales = stats.totalSales;
     activeSession.totalTransactions = stats.totalTransactions;
+    activeSession.screenShareEnabled = false;
 
     await activeSession.save();
 
     res.status(200).json({
       success: true,
-      message: 'Checked out successfully',
-      session: activeSession
+      message: 'Checked out successfully. Screen sharing stopped.',
+      session: activeSession,
+      finalStats: stats
     });
 
   } catch (error) {
@@ -143,7 +146,7 @@ exports.checkOut = async (req, res) => {
   }
 };
 
-// Get current session status
+// Get enhanced session status
 exports.getSessionStatus = async (req, res) => {
   try {
     const { cashierId } = req.params;
@@ -155,10 +158,29 @@ exports.getSessionStatus = async (req, res) => {
       status: 'active'
     });
 
+    // Get today's performance if session is active
+    let todaysPerformance = null;
+    if (activeSession) {
+      const todaysOrders = await Order.find({
+        cashierId,
+        date: { $gte: new Date(today + 'T00:00:00.000Z') }
+      });
+
+      todaysPerformance = {
+        sales: todaysOrders.reduce((sum, order) => sum + order.totalPrice, 0),
+        transactions: todaysOrders.length,
+        itemsSold: todaysOrders.reduce((sum, order) => {
+          return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+        }, 0)
+      };
+    }
+
     res.status(200).json({
       success: true,
       hasActiveSession: !!activeSession,
-      session: activeSession
+      session: activeSession,
+      todaysPerformance,
+      screenShareEnabled: activeSession?.screenShareEnabled || false
     });
 
   } catch (error) {
@@ -171,38 +193,60 @@ exports.getSessionStatus = async (req, res) => {
   }
 };
 
-// Get cashier session history
-exports.getSessionHistory = async (req, res) => {
+// Update screen sharing status
+exports.updateScreenShareStatus = async (req, res) => {
   try {
     const { cashierId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
+    const { isSharing, peerId } = req.body;
+    
+    const today = new Date().toISOString().split('T')[0];
+    
+    const session = await CashierSession.findOne({
+      cashierId,
+      sessionDate: today,
+      status: 'active'
+    });
 
-    const sessions = await CashierSession.find({ cashierId })
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit)
-      .select('-__v');
+    if (session) {
+      session.screenShareEnabled = isSharing;
+      session.peerId = peerId;
+      session.lastScreenShareUpdate = new Date();
+      await session.save();
+    }
 
-    const total = await CashierSession.countDocuments({ cashierId });
-
-    res.status(200).json({
+    res.json({
       success: true,
-      sessions,
-      totalPages: Math.ceil(total / limit),
-      currentPage: page,
-      total
+      message: `Screen sharing ${isSharing ? 'enabled' : 'disabled'}`,
+      session
     });
 
   } catch (error) {
-    console.error('Session history error:', error);
+    console.error('Update screen share status error:', error);
     res.status(500).json({
       success: false,
-      message: 'Server error fetching session history',
+      message: 'Error updating screen share status',
       error: error.message
     });
   }
 };
+exports.getSessionHistory = async (req, res) => {
+  try {
+    const cashierId = req.params.cashierId;
+    const today = new Date().toISOString().split('T')[0];
 
+    // Get session history for the cashier
+    const sessionHistory = await Order.find({
+      cashierId,
+      date: { $gte: today }
+    }).sort({ date: -1 });
 
-
-
+    res.json(sessionHistory);
+  } catch (error) {
+    console.error('Error fetching session history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message
+    });
+  }
+};

@@ -1,81 +1,61 @@
-const Theme = require('../models/themeModel');
+const Theme = require("../models/themeModel");
 
 exports.getTheme = async (req, res) => {
   try {
     let theme = await Theme.findOne();
     if (!theme) {
-      theme = new Theme();
+      // Create default theme if not exists
+      theme = new Theme({
+        name: "Default",
+        primaryColor: "#f97316",
+        secondaryColor: "#64748b",
+        mainSectionBackground: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
+        subSectionBackground: "#ffffff",
+        cardColor: "#ffffff",
+        cardHeaderColor: "#f97316",
+        modalColor: "#ffffff",
+        modalCrossBackgroundColor: "#ef4444",
+        modalCrossColor: "#ffffff",
+        mainTextColor: "#1e293b",
+        subTextColor: "#64748b",
+        buttonBackground: "#f97316",
+        buttonTextColor: "#ffffff",
+        buttonHoverBackground: "#ea580c",
+        buttonHoverTextColor: "#fff7ed",
+        sidebarBackground: "linear-gradient(180deg, #1e293b 0%, #334155 100%)",
+        sidebarLinkColor: "#cbd5e1",
+        sidebarLinkHoverColor: "#ffffff",
+        sidebarLinkHoverBackground: "#f97316",
+        sidebarActiveBackground: "#f97316",
+        sidebarActiveLinkColor: "#ffffff",
+      });
       await theme.save();
     }
     res.json(theme);
   } catch (error) {
-    console.error('Failed to get theme', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Failed to get theme", error);
+    res.status(500).json({ error: "Server error" });
   }
 };
 
 exports.updateTheme = async (req, res) => {
-  const {
-    mainSectionBackground,
-    subSectionBackground,
-    cardColor,
-    cardHeaderColor,
-    modalColor,
-    modalCrossBackgroundColor,
-    modalCrossColor,
-    mainTextColor,
-    subTextColor,
-    buttonBackground,
-    buttonTextColor,
-    buttonHoverBackground,
-    buttonHoverTextColor,
-    sidebarBackground,
-    sidebarLinkColor,
-    sidebarLinkHoverColor,
-    sidebarLinkHoverBackground,
-    sidebarActiveBackground,
-    sidebarActiveLinkColor,
-  } = req.body;
-
   try {
     let theme = await Theme.findOne();
-    if (!theme) theme = new Theme();
+    if (!theme) {
+      theme = new Theme();
+    }
 
-    // Main backgrounds
-    theme.mainSectionBackground = mainSectionBackground || theme.mainSectionBackground;
-    theme.subSectionBackground = subSectionBackground || theme.subSectionBackground;
-    
-    // Card colors
-    theme.cardColor = cardColor || theme.cardColor;
-    theme.cardHeaderColor = cardHeaderColor || theme.cardHeaderColor;
-    
-    // Modal colors
-    theme.modalColor = modalColor || theme.modalColor;
-    theme.modalCrossBackgroundColor = modalCrossBackgroundColor || theme.modalCrossBackgroundColor;
-    theme.modalCrossColor = modalCrossColor || theme.modalCrossColor;
-    
-    // Text colors
-    theme.mainTextColor = mainTextColor || theme.mainTextColor;
-    theme.subTextColor = subTextColor || theme.subTextColor;
-
-    // Button colors
-    theme.buttonBackground = buttonBackground || theme.buttonBackground;
-    theme.buttonTextColor = buttonTextColor || theme.buttonTextColor;
-    theme.buttonHoverBackground = buttonHoverBackground || theme.buttonHoverBackground;
-    theme.buttonHoverTextColor = buttonHoverTextColor || theme.buttonHoverTextColor;
-
-    // Sidebar colors
-    theme.sidebarBackground = sidebarBackground || theme.sidebarBackground;
-    theme.sidebarLinkColor = sidebarLinkColor || theme.sidebarLinkColor;
-    theme.sidebarLinkHoverColor = sidebarLinkHoverColor || theme.sidebarLinkHoverColor;
-    theme.sidebarLinkHoverBackground = sidebarLinkHoverBackground || theme.sidebarLinkHoverBackground;
-    theme.sidebarActiveBackground = sidebarActiveBackground || theme.sidebarActiveBackground;
-    theme.sidebarActiveLinkColor = sidebarActiveLinkColor || theme.sidebarActiveLinkColor;
+    // Overwrite existing theme properties from request body
+    Object.keys(req.body).forEach((key) => {
+      if (theme.schema.paths[key]) {
+        theme[key] = req.body[key];
+      }
+    });
 
     await theme.save();
     res.json(theme);
   } catch (error) {
-    console.error('Failed to update theme', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error("Failed to update theme", error);
+    res.status(500).json({ error: "Server error" });
   }
 };

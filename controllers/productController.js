@@ -1,5 +1,6 @@
 const { Products } = require("../models/productModel");
 const cloudinary = require("cloudinary").v2;
+const {Order}= require('../models/orderModel')
 
 // Helper: Calculate selling price
 function calculateSellingPrice({
@@ -322,12 +323,67 @@ const getProductByBarcode = async (req, res) => {
   }
 };
 
-
+const getProductWithStock = async (req, res) => {
+  try {
+    const products = await Products.find({ quantity: { $gt: 0 } })
+    if (!products) {
+      return res.status(404).json({ message: "No products found" });
+    }
+    res.status(200).json({ products });
+  }
+  catch (error) {
+    console.error("Error fetching products:", error.message);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 // Change route to not expect URL parameter
 
+const countEachProductOrder = async (req, res) => {
+  try {
+    const allProducts = await Products.find().lean();
+    const allOrders = await Order.find().lean();
 
+    // Prepare a map to count sold quantities per productId
+    const productOrderCountMap = {};
 
+    // Iterate through all orders' items to count quantities sold per product
+    allOrders.forEach((order) => {
+      if (order.items && Array.isArray(order.items)) {
+        order.items.forEach((item) => {
+          const productId = item.productId?.toString();
+          const quantity = item.quantity || 0;
+          if (!productId) return;
+
+          if (!productOrderCountMap[productId]) {
+            productOrderCountMap[productId] = 0;
+          }
+          productOrderCountMap[productId] += quantity;
+        });
+      }
+    });
+
+    // Map products to include their sold quantity
+    const productsWithSellingCount = allProducts.map((product) => ({
+      _id: product._id,
+      name: product.name,
+      price: product.price,
+      quantity: product.quantity, // available stock
+      sellingCount: productOrderCountMap[product._id.toString()] || 0,
+      barcode: product.barcode,
+      description: product.description,
+      categoryId: product.categoryId,
+      subcategoryId: product.subcategoryId,
+      image: product.image,
+      // Include other product fields as needed
+    }));
+
+    res.json(productsWithSellingCount);
+  } catch (error) {
+    console.error("Error counting each product orders:", error);
+    res.status(500).json({ message: "Failed to get product selling counts" });
+  }
+};
 module.exports = {
   getProducts,
   addProduct,
@@ -337,5 +393,7 @@ module.exports = {
   getProductsModel,
   getproductByname,
   getProductBycategory,
-  getProductByBarcode
+  getProductByBarcode,
+  getProductWithStock,
+  countEachProductOrder
 };

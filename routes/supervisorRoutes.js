@@ -1,46 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const {
+const { 
   getDashboardStats,
+  getCashierMonitoringData,
+  sendMessageToCashier,
+  getActiveCashiers,
+  forceStopScreenShare,
+  getCashierAnalytics,
   getCashierSessions,
+  getCashierStatsBYid,
   getCashierStats,
-  getCashierDetails,
-  forceCheckout,
   getSalesTrends,
   getHourlyPerformance,
-  exportCashierData
-} = require('../controllers/supervisorController');
+  getCashierRankings
+ 
+} = require("../controllers/supervisorController");
 
 
-// Dashboard statistics
-router.get('/supervisor/dashboard-stats', getDashboardStats);
 
-// Cashier sessions management
 router.get('/supervisor/cashier-sessions', getCashierSessions);
-
-// Cashier performance statistics
 router.get('/supervisor/cashier-stats', getCashierStats);
 
-// Detailed cashier information
-router.get('/supervisor/cashier-details/:cashierId', getCashierDetails);
+// Dashboard stats
+router.get('/supervisor/dashboard-stats', getDashboardStats);
 
-// Force checkout a cashier session
-router.patch('/supervisor/force-checkout/:sessionId', forceCheckout);
+// Active cashiers
+router.get('/supervisor/active-cashiers', getActiveCashiers);
 
-// Sales trends over time
+// Cashier monitoring data
+router.get('/supervisor/cashier-monitoring/:cashierId', getCashierMonitoringData);
+
+// Send message to cashier
+router.post('/supervisor/send-message', sendMessageToCashier);
+
+// Force stop screen sharing
+router.post('/supervisor/force-stop-screen-share/:cashierId', forceStopScreenShare);
+
+// Cashier analytics
+router.get('/supervisor/cashier-analytics/:cashierId', getCashierAnalytics);
+
+router.get('/supervisor/active-cashier-sessions', getCashierStatsBYid);
 router.get('/supervisor/sales-trends', getSalesTrends);
-
-// Hourly performance data
 router.get('/supervisor/hourly-performance', getHourlyPerformance);
-
-// Export cashier data for reporting
-router.get('/supervisor/export-data', exportCashierData);
-
-// Additional routes for comprehensive supervision
-
-
-
+router.get('/supervisor/cashier-rankings', getCashierRankings);
 
 module.exports = router;
-
-// Update session notes (supervisor can add notes

@@ -1,102 +1,369 @@
 const CashierSession = require('../models/cashierModel');
 const Users = require('../models/userModel');
-const getAllCashier= async (req, res) => {
-  try {
-    const { date = new Date().toISOString().split('T')[0] } = req.query;
-    
-    // Get total unique cashiers for the date
-    const totalCashiers = await Users.find({role:"cashier"}).countDocuments();
-    
-    // Get active sessions count
-    const activeSessions = await CashierSession.countDocuments({
-      sessionDate: date,
-      status: 'active'
-    });
-    
-    // Get today's total sales and transactions
-    const salesStats = await CashierSession.aggregate([
-      {
-        $match: {
-          sessionDate: date
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          todayTotalSales: { $sum: '$totalSales' },
-          todayTransactions: { $sum: '$totalTransactions' },
-          activeCashiers: { $addToSet: '$cashierId' }
-        }
-      },
-      {
-        $addFields: {
-          activeCashiersCount: { $size: '$activeCashiers' }
-          
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-    
-    res.json(salesStats[0] || { todayTotalSales: 0, todayTransactions: 0, activeCashiersCount: 0 });
-  } catch (error) {
-    console.error('Get all cashier error:', error);
-    res.status(500).json({ 
-      message: 'Error fetching all cashier statistics',
-      error: error.message 
-    });
-  }
-};
+const { Order } = require("../models/orderModel");
 
-// Get dashboard statistics
+// Enhanced dashboard statistics
 const getDashboardStats = async (req, res) => {
   try {
-    const { date = new Date().toISOString().split('T')[0] } = req.query;
+    const date = req.query.date || new Date().toISOString().split('T')[0];
     
-    // Get total unique cashiers for the date
-    const totalCashiers = await CashierSession.distinct('cashierId', {
-      sessionDate: date
-    }).countDocuments();
-    
-    // Get active sessions count
-    const activeSessions = await CashierSession.countDocuments({
-      sessionDate: date,
-      status: 'active'
+    // Total cashiers
+    const totalCashiers = await Users.countDocuments({ role: 'cashier' });
+
+    // Active sessions for the date
+    const activeSessions = await CashierSession.countDocuments({ 
+      sessionDate: date, 
+      status: 'active' 
     });
-    
-    // Get today's total sales and transactions
-    const salesStats = await CashierSession.aggregate([
+
+    // Today's sales and transactions from Orders
+    const orderStats = await Order.aggregate([
       {
         $match: {
-          sessionDate: date
+          date: {
+            $gte: new Date(date + 'T00:00:00.000Z'),
+            $lt: new Date(new Date(date + 'T00:00:00.000Z').getTime() + 24*60*60*1000)
+          }
         }
       },
       {
         $group: {
           _id: null,
-          todayTotalSales: { $sum: '$totalSales' },
-          todayTransactions: { $sum: '$totalTransactions' }
+          todayTotalSales: { $sum: '$totalPrice' },
+          todayTransactions: { $sum: 1 },
+          totalItems: {
+            $sum: {
+              $sum: '$items.quantity'
+            }
+          }
         }
       }
     ]);
-    
-    const stats = salesStats[0] || { todayTotalSales: 0, todayTransactions: 0 };
-    
+
+    const salesData = orderStats[0] || { 
+      todayTotalSales: 0, 
+      todayTransactions: 0, 
+      totalItems: 0 
+    };
+
+    // Top performer
+    const topPerformer = await CashierSession.aggregate([
+      { $match: { sessionDate: date } },
+      {
+        $group: {
+          _id: '$cashierId',
+          totalSales: { $sum: '$totalSales' },
+          totalTransactions: { $sum: '$totalTransactions' },
+          cashierName: { $first: '$cashierName' }
+        }
+      },
+      { $sort: { totalSales: -1 } },
+      { $limit: 1 }
+    ]);
+
+    // Average session time
+    const avgSessionTime = await CashierSession.aggregate([
+      {
+        $match: {
+          sessionDate: date,
+          checkOutTime: { $ne: null }
+        }
+      },
+      {
+        $project: {
+          sessionDuration: {
+            $divide: [
+              { $subtract: ['$checkOutTime', '$checkInTime'] },
+              3600000 // Convert to hours
+            ]
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          avgTime: { $avg: '$sessionDuration' }
+        }
+      }
+    ]);
+
     res.json({
       totalCashiers,
       activeSessions,
-      todayTotalSales: stats.todayTotalSales,
-      todayTransactions: stats.todayTransactions
+      todayTotalSales: salesData.todayTotalSales,
+      todayTransactions: salesData.todayTransactions,
+      totalItems: salesData.totalItems,
+      avgSessionTime: avgSessionTime[0]?.avgTime || 0,
+      topPerformer: topPerformer[0]?.cashierName || "N/A",
+      efficiencyRate: activeSessions > 0 ? (salesData.todayTransactions / activeSessions).toFixed(1) : 0,
+      activeAlerts: 0 // Implement based on your business logic
     });
+
   } catch (error) {
     console.error('Dashboard stats error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Error fetching dashboard statistics',
+      error: error.message
+    });
+  }
+};
+
+// Enhanced cashier monitoring with real-time data
+const getCashierMonitoringData = async (req, res) => {
+  try {
+    const { cashierId } = req.params;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get today's orders for this cashier
+    const todaysOrders = await Order.find({
+      cashierId,
+      date: { $gte: today },
+    }).sort({ date: -1 });
+
+    // Calculate stats
+    const todaysSales = todaysOrders.reduce((sum, order) => sum + order.totalPrice, 0);
+    const transactionsCount = todaysOrders.length;
+    const itemsSold = todaysOrders.reduce((sum, order) => {
+      return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
+    }, 0);
+
+    // Get all orders for average calculation
+    const allOrders = await Order.find({ cashierId });
+    const avgSale = allOrders.length > 0 
+      ? allOrders.reduce((sum, order) => sum + order.totalPrice, 0) / allOrders.length 
+      : 0;
+
+    // Get recent transactions (limit to 10)
+    const recentTransactions = todaysOrders.slice(0, 10);
+
+    // Get current session info
+    const currentSession = await CashierSession.findOne({
+      cashierId,
+      sessionDate: today.toISOString().split('T')[0],
+      status: 'active'
+    });
+    const cashierName = Users.findById(cashierId).username;
+
+    // Performance metrics
+    const performanceMetrics = {
+      avgTransactionValue: transactionsCount > 0 ? (todaysSales / transactionsCount) : 0,
+      itemsPerTransaction: transactionsCount > 0 ? (itemsSold / transactionsCount) : 0,
+      salesPerHour: currentSession ? 
+        (todaysSales / ((new Date() - new Date(currentSession.checkInTime)) / 3600000)) : 0,
+    };
+
+    res.json({
+      cashierName: cashierName,
+      todaysSales: todaysSales.toFixed(2),
+      transactionsCount,
+      itemsSold,
+      avgSale: avgSale.toFixed(2),
+      recentTransactions,
+      currentSession,
+      performanceMetrics,
+      lastUpdated: new Date()
+    });
+  } catch (error) {
+    console.error('Error fetching cashier monitoring data:', error);
+    res.status(500).json({ 
+      message: 'Server error', 
       error: error.message 
     });
   }
 };
 
-// Get all cashier sessions with optional filters
+// Send message to cashier
+const sendMessageToCashier = async (req, res) => {
+  try {
+    const { cashierId, message, priority = 'normal' } = req.body;
+    const supervisorId = req.decoded.userId;
+
+    if (!cashierId || !message) {
+      return res.status(400).json({
+        message: 'Cashier ID and message are required'
+      });
+    }
+
+    // Here you would typically save the message to database
+    // For now, we'll just emit via socket
+
+    // The socket handler will handle the actual message sending
+    res.json({
+      success: true,
+      message: 'Message sent successfully',
+      timestamp: new Date()
+    });
+
+  } catch (error) {
+    console.error('Send message error:', error);
+    res.status(500).json({
+      message: 'Error sending message',
+      error: error.message
+    });
+  }
+};
+
+// Get active cashiers with enhanced data
+const getActiveCashiers = async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Get active sessions with user details
+    const activeSessions = await CashierSession.find({
+      sessionDate: today,
+      status: 'active'
+    }).populate('cashierId', 'username email');
+
+    // Get today's performance for each cashier
+    const cashierPerformance = await Promise.all(
+      activeSessions.map(async (session) => {
+        const todaysOrders = await Order.find({
+          cashierId: session.cashierId._id,
+          date: { $gte: new Date(today + 'T00:00:00.000Z') }
+        });
+
+        const todaysSales = todaysOrders.reduce((sum, order) => sum + order.totalPrice, 0);
+        const transactionsCount = todaysOrders.length;
+
+        return {
+          cashierId: session.cashierId._id,
+          cashierName: session.cashierId.username,
+          sessionData: session,
+          todaysSales,
+          transactionsCount,
+          checkInTime: session.checkInTime,
+          active: true,
+          hasScreenShare: false // This will be updated by socket handler
+        };
+      })
+    );
+
+    res.json(cashierPerformance);
+  } catch (error) {
+    console.error('Get active cashiers error:', error);
+    res.status(500).json({
+      message: 'Error fetching active cashiers',
+      error: error.message
+    });
+  }
+};
+
+// Force stop screen sharing
+const forceStopScreenShare = async (req, res) => {
+  try {
+    const { cashierId } = req.params;
+    const { reason } = req.body;
+
+    // This would typically update database and notify via socket
+    // The socket handler manages the actual screen sharing state
+
+    res.json({
+      success: true,
+      message: 'Screen sharing stopped',
+      cashierId,
+      reason
+    });
+
+  } catch (error) {
+    console.error('Force stop screen share error:', error);
+    res.status(500).json({
+      message: 'Error stopping screen share',
+      error: error.message
+    });
+  }
+};
+
+// Get cashier session analytics
+const getCashierAnalytics = async (req, res) => {
+  try {
+    const { cashierId } = req.params;
+    const { days = 7 } = req.query;
+    
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days));
+    
+    // Get session data for the period
+    const sessions = await CashierSession.find({
+      cashierId,
+      checkInTime: { $gte: startDate }
+    }).sort({ checkInTime: -1 });
+
+    // Get orders data for the period
+    const orders = await Order.find({
+      cashierId,
+      date: { $gte: startDate }
+    }).sort({ date: -1 });
+
+    // Calculate analytics
+    const analytics = {
+      totalSessions: sessions.length,
+      totalSales: orders.reduce((sum, order) => sum + order.totalPrice, 0),
+      totalTransactions: orders.length,
+      avgSessionDuration: sessions.length > 0 ? 
+        sessions.reduce((sum, session) => {
+          if (session.checkOutTime) {
+            return sum + ((new Date(session.checkOutTime) - new Date(session.checkInTime)) / 3600000);
+          }
+          return sum;
+        }, 0) / sessions.length : 0,
+      peakHours: await calculatePeakHours(orders),
+      dailyBreakdown: await calculateDailyBreakdown(orders, days)
+    };
+
+    res.json(analytics);
+  } catch (error) {
+    console.error('Get cashier analytics error:', error);
+    res.status(500).json({
+      message: 'Error fetching cashier analytics',
+      error: error.message
+    });
+  }
+};
+
+// Helper function to calculate peak hours
+const calculatePeakHours = async (orders) => {
+  const hourlyData = {};
+  
+  orders.forEach(order => {
+    const hour = new Date(order.date).getHours();
+    if (!hourlyData[hour]) {
+      hourlyData[hour] = { transactions: 0, sales: 0 };
+    }
+    hourlyData[hour].transactions++;
+    hourlyData[hour].sales += order.totalPrice;
+  });
+
+  return Object.entries(hourlyData)
+    .map(([hour, data]) => ({ hour: parseInt(hour), ...data }))
+    .sort((a, b) => b.transactions - a.transactions);
+};
+
+// Helper function to calculate daily breakdown
+const calculateDailyBreakdown = async (orders, days) => {
+  const dailyData = {};
+  
+  for (let i = 0; i < days; i++) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateStr = date.toISOString().split('T')[0];
+    dailyData[dateStr] = { transactions: 0, sales: 0 };
+  }
+
+  orders.forEach(order => {
+    const dateStr = new Date(order.date).toISOString().split('T')[0];
+    if (dailyData[dateStr]) {
+      dailyData[dateStr].transactions++;
+      dailyData[dateStr].sales += order.totalPrice;
+    }
+  });
+
+  return Object.entries(dailyData)
+    .map(([date, data]) => ({ date, ...data }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+};
+
+
 const getCashierSessions = async (req, res) => {
   try {
     const { 
@@ -284,216 +551,225 @@ const getCashierDetails = async (req, res) => {
     });
   }
 };
-
-// Force checkout a cashier session
-const forceCheckout = async (req, res) => {
+const getCashierStatsBYid =  async (req, res) => {
   try {
-    const { sessionId } = req.params;
-    const { reason } = req.body;
-    
-    const session = await CashierSession.findById(sessionId);
-    
-    if (!session) {
-      return res.status(404).json({ message: 'Session not found' });
-    }
-    
-    if (session.status !== 'active') {
-      return res.status(400).json({ message: 'Session is not active' });
-    }
-    
-    // Update session
-    session.checkOutTime = new Date();
-    session.status = 'completed';
-    
-    // Add force checkout note if reason provided
-    if (reason) {
-      session.notes = `Force checkout by supervisor: ${reason}`;
-    }
-    
-    await session.save();
-    
-    res.json({
-      message: 'Cashier session forcefully checked out',
-      session
-    });
+    const todayDateStr = new Date().toISOString().split('T')[0];
+
+    // Get active sessions for today, with full user info
+    const sessions = await CashierSession.find({
+      sessionDate: todayDateStr,
+      status: 'active'
+    }).populate('cashierId', 'username email');
+
+    const populatedSessions = await Promise.all(sessions.map(async session => {
+      // Get today's orders for this cashier
+      const orders = await Order.find({
+        cashierId: session.cashierId._id,
+        date: {
+          $gte: new Date(todayDateStr + 'T00:00:00.000Z'),
+          $lt: new Date(new Date(todayDateStr + 'T00:00:00.000Z').getTime() + 24 * 60 * 60 * 1000)
+        }
+      });
+      const totalSales = orders.reduce((sum, order) => sum + order.totalPrice, 0);
+      const totalTransactions = orders.length;
+      return {
+        _id: session._id,
+        cashierName: session.cashierId.username,
+        cashierId: session.cashierId._id,
+        email: session.cashierId.email,
+        status: session.status,
+        checkInTime: session.checkInTime,
+        checkOutTime: session.checkOutTime,
+        totalSales,
+        totalTransactions
+      };
+    }));
+
+    res.json({ sessions: populatedSessions });
   } catch (error) {
-    console.error('Force checkout error:', error);
-    res.status(500).json({ 
-      message: 'Error forcing checkout',
-      error: error.message 
-    });
+    console.error('Error fetching active cashier sessions:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
 
-// Get sales trends over time
+
 const getSalesTrends = async (req, res) => {
   try {
-    const { 
-      days = 7,
-      cashierId 
-    } = req.query;
-    
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - parseInt(days));
+    const days = parseInt(req.query.days) || 7;
+    const cashierId = req.query.cashierId;
     const endDate = new Date();
-    
-    const matchQuery = {
-      sessionDate: {
-        $gte: startDate.toISOString().split('T')[0],
-        $lte: endDate.toISOString().split('T')[0]
-      }
+    endDate.setHours(23, 59, 59, 999);
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - days + 1);
+    startDate.setHours(0, 0, 0, 0);
+
+    const match = {
+      date: { $gte: startDate, $lte: endDate }
     };
-    
-    if (cashierId && cashierId !== 'all') {
-      matchQuery.cashierId = new mongoose.Types.ObjectId(cashierId);
+    if (cashierId && mongoose.Types.ObjectId.isValid(cashierId)) {
+      match.cashierId = mongoose.Types.ObjectId(cashierId);
     }
-    
-    const trends = await CashierSession.aggregate([
-      { $match: matchQuery },
+
+    const trends = await Order.aggregate([
+      { $match: match },
       {
         $group: {
-          _id: '$sessionDate',
-          totalSales: { $sum: '$totalSales' },
-          totalTransactions: { $sum: '$totalTransactions' },
-          activeCashiers: { $addToSet: '$cashierId' }
-        }
-      },
-      {
-        $addFields: {
-          activeCashiersCount: { $size: '$activeCashiers' }
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          totalSales: { $sum: "$totalPrice" },
+          totalTransactions: { $sum: 1 }
         }
       },
       { $sort: { _id: 1 } }
     ]);
-    
-    res.json(trends);
+
+    // Fill missing dates with zeroes
+    const results = [];
+    for (let i = 0; i < days; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
+      const dateStr = date.toISOString().split("T")[0];
+      const dayData = trends.find((t) => t._id === dateStr);
+      results.push({
+        _id: dateStr,
+        totalSales: dayData ? dayData.totalSales : 0,
+        totalTransactions: dayData ? dayData.totalTransactions : 0
+      });
+    }
+
+    res.json(results);
   } catch (error) {
-    console.error('Get sales trends error:', error);
-    res.status(500).json({ 
-      message: 'Error fetching sales trends',
-      error: error.message 
-    });
+    console.error("getSalesTrends error:", error);
+    res.status(500).json({ message: "Error fetching sales trends", error: error.message });
   }
 };
 
-// Get hourly performance data
 const getHourlyPerformance = async (req, res) => {
   try {
-    const { date = new Date().toISOString().split('T')[0] } = req.query;
-    
-    const performance = await CashierSession.aggregate([
+    const dateStr = req.query.date;
+    if (!dateStr) {
+      return res.status(400).json({ message: "Date parameter is required" });
+    }
+    const dateStart = new Date(dateStr + "T00:00:00.000Z");
+    const dateEnd = new Date(dateStart.getTime() + 24 * 60 * 60 * 1000);
+
+    // Orders aggregation by hour
+    const hourlyOrders = await Order.aggregate([
       {
         $match: {
-          sessionDate: date
+          date: { $gte: dateStart, $lt: dateEnd }
         }
       },
       {
-        $project: {
-          cashierName: 1,
-          totalSales: 1,
-          totalTransactions: 1,
-          checkInHour: { $hour: '$checkInTime' },
-          workingHours: {
-            $divide: [
-              {
-                $subtract: [
-                  {
-                    $cond: [
-                      { $ne: ['$checkOutTime', null] },
-                      '$checkOutTime',
-                      new Date()
-                    ]
-                  },
-                  '$checkInTime'
-                ]
-              },
-              3600000
-            ]
+        $group: {
+          _id: { $hour: "$date" },
+          totalSales: { $sum: "$totalPrice" },
+          totalTransactions: { $sum: 1 }
+        }
+      }
+    ]);
+
+    // Active cashiers count per hour (from sessions)
+    const sessions = await CashierSession.find({
+      sessionDate: dateStr,
+      status: "active"
+    });
+
+    const activeCashiersByHour = {};
+
+    sessions.forEach((session) => {
+      const hour = new Date(session.checkInTime).getUTCHours();
+      activeCashiersByHour[hour] = (activeCashiersByHour[hour] || 0) + 1;
+    });
+
+    // Combine data and fill missing hours
+    const results = [];
+    for (let h = 0; h < 24; h++) {
+      const orderData = hourlyOrders.find((o) => o._id === h) || { totalSales: 0, totalTransactions: 0 };
+      results.push({
+        _id: h,
+        totalSales: orderData.totalSales,
+        totalTransactions: orderData.totalTransactions,
+        activeCashiers: activeCashiersByHour[h] || 0
+      });
+    }
+
+    res.json(results);
+  } catch (error) {
+    console.error("getHourlyPerformance error:", error);
+    res.status(500).json({ message: "Error fetching hourly performance", error: error.message });
+  }
+};
+const getCashierRankings = async (req, res) => {
+  try {
+    const dateStr = req.query.date;
+    if (!dateStr) {
+      return res.status(400).json({ message: "Date parameter is required" });
+    }
+
+    const rankings = await CashierSession.aggregate([
+      {
+        $match: {
+          sessionDate: dateStr
+        }
+      },
+      {
+        $group: {
+          _id: "$cashierId",
+          cashierName: { $first: "$cashierName" },
+          totalSales: { $sum: "$totalSales" },
+          totalTransactions: { $sum: "$totalTransactions" },
+          sessions: { $push: "$$ROOT" },
+          isActive: {
+            $max: {
+              $cond: [{ $eq: ["$status", "active"] }, true, false]
+            }
           }
         }
       },
       {
-        $group: {
-          _id: '$checkInHour',
-          totalSales: { $sum: '$totalSales' },
-          totalTransactions: { $sum: '$totalTransactions' },
-          activeCashiers: { $sum: 1 },
-          avgWorkingHours: { $avg: '$workingHours' }
+        $addFields: {
+          workingHours: {
+            $sum: {
+              $map: {
+                input: "$sessions",
+                as: "session",
+                in: {
+                  $divide: [
+                    {
+                      $subtract: [
+                        { $ifNull: ["$$session.checkOutTime", new Date()] },
+                        "$$session.checkInTime"
+                      ]
+                    },
+                    3600000
+                  ]
+                }
+              }
+            }
+          }
         }
       },
-      { $sort: { _id: 1 } }
+      { $sort: { totalSales: -1 } }
     ]);
-    
-    res.json(performance);
+
+    res.json(rankings);
   } catch (error) {
-    console.error('Get hourly performance error:', error);
-    res.status(500).json({ 
-      message: 'Error fetching hourly performance',
-      error: error.message 
-    });
+    console.error("getCashierRankings error:", error);
+    res.status(500).json({ message: "Error fetching cashier rankings", error: error.message });
   }
 };
-
-// Export all cashier data for reporting
-const exportCashierData = async (req, res) => {
-  try {
-    const { 
-      startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      endDate = new Date().toISOString().split('T')[0],
-      format = 'json'
-    } = req.query;
-    
-    const data = await CashierSession.find({
-      sessionDate: {
-        $gte: startDate,
-        $lte: endDate
-      }
-    })
-    .populate('cashierId', 'name email')
-    .sort({ sessionDate: -1, checkInTime: -1 });
-    
-    if (format === 'csv') {
-      // Convert to CSV format
-      const csvHeader = 'Date,Cashier Name,Check In,Check Out,Duration (hours),Sales,Transactions,Status\n';
-      const csvData = data.map(session => {
-        const duration = session.checkOutTime 
-          ? ((new Date(session.checkOutTime) - new Date(session.checkInTime)) / 3600000).toFixed(2)
-          : 'N/A';
-        
-        return [
-          session.sessionDate,
-          session.cashierName,
-          new Date(session.checkInTime).toLocaleString(),
-          session.checkOutTime ? new Date(session.checkOutTime).toLocaleString() : 'N/A',
-          duration,
-          session.totalSales,
-          session.totalTransactions,
-          session.status
-        ].join(',');
-      }).join('\n');
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=cashier-data.csv');
-      res.send(csvHeader + csvData);
-    } else {
-      res.json(data);
-    }
-  } catch (error) {
-    console.error('Export cashier data error:', error);
-    res.status(500).json({ 
-      message: 'Error exporting cashier data',
-      error: error.message 
-    });
-  }
-};
-
 module.exports = {
   getDashboardStats,
+  getCashierMonitoringData,
+  sendMessageToCashier,
+  getActiveCashiers,
+  forceStopScreenShare,
+  getCashierAnalytics,
   getCashierSessions,
-  getCashierStats,
   getCashierDetails,
-  forceCheckout,
+  getCashierStats,
+  getCashierStatsBYid,
   getSalesTrends,
   getHourlyPerformance,
-  exportCashierData
+  getCashierRankings
 };

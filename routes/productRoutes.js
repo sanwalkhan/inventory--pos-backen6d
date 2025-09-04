@@ -9,10 +9,13 @@ const {
   getProductsBySubCategory,
   getProductsModel,
   getproductByname,
- getProductByBarcode
+ getProductByBarcode,
+ getProductWithStock,
+ countEachProductOrder,
 } = require("../controllers/productController");
 
 productRouter.get("/products", getProducts);
+productRouter.get("/productswithstock",getProductWithStock);
 productRouter.post("/products", upload.single("image"), addProduct);  // POST with image upload
 
 productRouter.delete("/products/:id", deleteProduct);
@@ -25,5 +28,6 @@ productRouter.get(
 );
 productRouter.get("/products/subcategory/:subcategoryId", getProductsModel);
 productRouter.get("/products/productsCategories", getProductsModel);
+productRouter.get("/counteachproductorder", countEachProductOrder);
 
 module.exports = productRouter;
