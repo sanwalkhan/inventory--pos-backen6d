@@ -52,7 +52,7 @@ const port = process.env.PORT;
 
 // Middleware
 app.use(bodyParser.json());
-const allowedOrigins = ["http://localhost:5173", "http://localhost:5174" , "https://inventory-pearl-nine.vercel.app"];
+const allowedOrigins = ["http://localhost:5173", "http://localhost:5174" , "https://inventory-pearl-nine.vercel.app/"];
  app.use(cors({ origin: true, credentials: true }));
 
 
