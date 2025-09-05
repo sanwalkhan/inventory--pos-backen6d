@@ -53,18 +53,7 @@ const port = process.env.PORT;
 // Middleware
 app.use(bodyParser.json());
 const allowedOrigins = ["http://localhost:5173", "http://localhost:5174" , "https://pos-inventory-frontend-zeta.vercel.app"];
- app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // allow server-to-server or curl
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error("Not allowed by CORS: " + origin), false);
-    },
-    credentials: true,
-  })
-);
+ app.use(cors({ origin: true, credentials: true }));
 
 
 // Routes
