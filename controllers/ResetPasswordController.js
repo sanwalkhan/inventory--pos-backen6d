@@ -42,7 +42,7 @@ exports.forgotPassword = async (req, res) => {
 
     if (!user) {
       // For security, do not reveal if email does not exist
-      return res.status(200).json({ message: "If the email is registered, reset instructions sent" });
+      return res.status(404).json({ message: "Email not found" });
     }
 
     // Create a JWT reset token valid for 1 hour

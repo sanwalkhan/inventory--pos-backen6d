@@ -6,21 +6,22 @@ require("dotenv").config({ path: ".env" });
 require("./models/dbConnection");
 const http = require("http"); // For WebSocket
 const { Server } = require("socket.io");
-const { PeerServer } = require("peer");
- 
-// ------------------ PeerJS ------------------
+const {PeerServer} = require('peer');
+
 const peerServer = PeerServer({
   port: 9000,
-  path: "/peerjs",
+  path: '/peerjs',
   allow_discovery: true,
   debug: true,
   corsOptions: {
-    origin: [process.env.FRONTEND_URL || "http://localhost:5173"],
-    credentials: true,
-  },
+    origin: [
+      process.env.FRONTEND_URL || 'http://localhost:5173'
+    ],
+    credentials: true
+  }
 });
- 
-// ------------------ Import Routes ------------------
+
+// Import Routes
 const authRouter = require("./routes/authRoutes");
 const adminRouter = require("./routes/adminRoutes");
 const userRouter = require("./routes/userRoutes");
@@ -44,22 +45,22 @@ const themeRouter = require("./routes/themeRoutes");
 const cashierRouter = require("./routes/cashierRoutes");
 const supervisorRouter = require("./routes/supervisorRoutes");
 const resetPasswordRouter = require("./routes/ResetPasswordRoutes");
- 
-// ------------------ App Setup ------------------
+
+
 const app = express();
-const port = process.env.PORT || 5000;
- 
+const port = process.env.PORT;
+
 // Middleware
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173", // your frontend domain
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true,
-  })
-);
 app.use(bodyParser.json());
- 
-// ------------------ Routes ------------------
+const allowedOrigins = process.env.FRONTEND_URL || "http://localhost:5173";
+app.use(cors({
+  origin: allowedOrigins, // your frontend
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
+
+
+// Routes
 app.use("/api", authRouter);
 app.use("/api", adminRouter);
 app.use("/api", userRouter);
@@ -76,14 +77,16 @@ app.use("/api", adminSettingRouter);
 app.use("/api", supplierRouter);
 app.use("/api", cashierDashboardRouter);
 app.use("/api", mailrouter);
-app.use("/api", managerrouter);
-app.use("/api", managerSettingRouter);
-app.use("/api", themeRouter);
-app.use("/api", cashierRouter);
-app.use("/api", supervisorRouter);
-app.use("/api", resetPasswordRouter);
- 
-// ------------------ CRON Job ------------------
+app.use("/api", managerrouter)
+app.use("/api",managerSettingRouter);
+app.use("/api",themeRouter);
+app.use("/api",cashierRouter);
+app.use("/api",supervisorRouter);
+app.use("/api",resetPasswordRouter);
+
+
+
+// Schedule: Run every day at 12 AM Pakistan time
 cron.schedule(
   "0 0 * * *",
   async () => {
@@ -93,57 +96,63 @@ cron.schedule(
     );
     await sendDailySalesReportEmail();
   },
-  { timezone: "Asia/Karachi" }
+  {
+    timezone: "Asia/Karachi",
+  }
 );
- 
-// ------------------ WebSocket Setup ------------------
+
+// --- WebSocket Setup ---
 const server = http.createServer(app);
- 
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true,
   },
 });
- 
+
 io.on("connection", (socket) => {
   console.log("A client connected:", socket.id);
- 
+
   // Example test event
   socket.on("ping", (msg) => {
     console.log("Ping received:", msg);
     socket.emit("pong", "Hello from server!");
   });
- 
+
+    console.log("A client connected:", socket.id);
+
+
+
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
   });
 });
- 
-// ------------------ PeerJS Events ------------------
-peerServer.on("connection", (client) => {
-  console.log("PeerJS client connected:", client.getId());
+
+peerServer.on('connection', (client) => {
+  console.log('PeerJS client connected:', client.getId());
 });
- 
-peerServer.on("disconnect", (client) => {
-  console.log("PeerJS client disconnected:", client.getId());
+
+peerServer.on('disconnect', (client) => {
+  console.log('PeerJS client disconnected:', client.getId());
 });
- 
-peerServer.on("error", (error) => {
-  console.error("PeerJS server error:", error);
+
+peerServer.on('error', (error) => {
+  console.error('PeerJS server error:', error);
 });
- 
-// ------------------ Start Servers ------------------
-console.log("PeerJS server running on port 9000");
-console.log("WebSocket endpoint: ws://localhost:9000/peerjs");
- 
+
+// Start the server
+console.log('PeerJS server running on port 9000');
+console.log('WebSocket endpoint: ws://localhost:9000/peerjs');
+
+// Keep the process running
+process.on('SIGINT', () => {
+  console.log('\nShutting down PeerJS server...');
+  process.exit(0);
+});
+
+// Start Server with WebSocket
 server.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
-});
- 
-// Graceful shutdown
-process.on("SIGINT", () => {
-  console.log("\nShutting down PeerJS server...");
-  process.exit(0);
 });
