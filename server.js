@@ -7,6 +7,14 @@ require("./models/dbConnection");
 const http = require("http"); // For WebSocket
 const { Server } = require("socket.io");
 const {PeerServer} = require('peer');
+const Currency = require("./models/currancyModel");
+(async () => {
+  const count = await Currency.countDocuments();
+  if (count === 0) {
+    await Currency.create({}); // this will auto-fill defaults: PKR, Rs, Pakistani Rupee
+    console.log("Default PKR currency created");
+  }
+})();
 
 const peerServer = PeerServer({
   port: 9000,
@@ -45,7 +53,7 @@ const themeRouter = require("./routes/themeRoutes");
 const cashierRouter = require("./routes/cashierRoutes");
 const supervisorRouter = require("./routes/supervisorRoutes");
 const resetPasswordRouter = require("./routes/ResetPasswordRoutes");
-
+const currencyRouter = require("./routes/currencyRoutes");
 
 const app = express();
 const port = process.env.PORT;
@@ -83,6 +91,8 @@ app.use("/api",themeRouter);
 app.use("/api",cashierRouter);
 app.use("/api",supervisorRouter);
 app.use("/api",resetPasswordRouter);
+app.use("/api",currencyRouter);
+
 
 
 

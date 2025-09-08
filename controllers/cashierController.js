@@ -33,6 +33,10 @@ exports.checkIn = async (req, res) => {
     });
 
     if (existingSession) {
+      // Update last activity time
+      existingSession.lastActivityTime = new Date();
+      await existingSession.save();
+
       return res.status(200).json({
         success: true,
         message: 'Already checked in',
@@ -48,10 +52,20 @@ exports.checkIn = async (req, res) => {
       checkInTime: new Date(),
       sessionDate: today,
       screenShareEnabled: true,
-      autoScreenShareRequested: true
+      autoScreenShareRequested: true,
+      lastActivityTime: new Date()
     });
 
     await newSession.save();
+
+    // Emit check-in event via socket
+    if (req.io) {
+      req.io.emit('cashier-checked-in', {
+        cashierId,
+        sessionData: newSession,
+        cashierName: cashier.username
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -70,10 +84,10 @@ exports.checkIn = async (req, res) => {
   }
 };
 
-// Enhanced check out with screen sharing cleanup
+// Enhanced check out with screen sharing cleanup and reason tracking
 exports.checkOut = async (req, res) => {
   try {
-    const { cashierId } = req.body;
+    const { cashierId, reason, reasonDetails } = req.body;
 
     if (!cashierId) {
       return res.status(400).json({
@@ -121,17 +135,31 @@ exports.checkOut = async (req, res) => {
     const stats = sessionStats[0] || { totalSales: 0, totalTransactions: 0 };
 
     // Update session with checkout time and stats
-    activeSession.checkOutTime = new Date();
-    activeSession.status = 'completed';
+    const checkoutTime = new Date();
+    activeSession.checkOutTime = checkoutTime;
+    activeSession.status = reason === 'manual' ? 'completed' : 'auto-checkout';
     activeSession.totalSales = stats.totalSales;
     activeSession.totalTransactions = stats.totalTransactions;
     activeSession.screenShareEnabled = false;
+    activeSession.checkoutReason = reason || 'manual';
+    activeSession.checkoutReasonDetails = reasonDetails || null;
+    activeSession.sessionDuration = Math.round((checkoutTime - activeSession.checkInTime) / (1000 * 60));
 
     await activeSession.save();
 
+    // Emit check-out event via socket
+    if (req.io) {
+      req.io.emit('cashier-checked-out', {
+        cashierId,
+        sessionData: activeSession,
+        reason: activeSession.checkoutReason,
+        reasonDetails: activeSession.checkoutReasonDetails
+      });
+    }
+
     res.status(200).json({
       success: true,
-      message: 'Checked out successfully. Screen sharing stopped.',
+      message: `Checked out successfully. Reason: ${reason || 'manual'}`,
       session: activeSession,
       finalStats: stats
     });
@@ -141,6 +169,96 @@ exports.checkOut = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error during check-out',
+      error: error.message
+    });
+  }
+};
+
+// Auto checkout for tab switching, minimizing, etc.
+exports.autoCheckOut = async (req, res) => {
+  try {
+    const { cashierId, reason, reasonDetails } = req.body;
+
+    if (!cashierId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cashier ID is required'
+      });
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    // Find active session for today
+    const activeSession = await CashierSession.findOne({
+      cashierId,
+      sessionDate: today,
+      status: 'active'
+    });
+
+    if (!activeSession) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active session found for today'
+      });
+    }
+
+    // Calculate session statistics
+    const sessionStats = await Order.aggregate([
+      {
+        $match: {
+          cashierId: cashierId,
+          date: {
+            $gte: activeSession.checkInTime,
+            $lte: new Date()
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: '$totalPrice' },
+          totalTransactions: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const stats = sessionStats[0] || { totalSales: 0, totalTransactions: 0 };
+
+    // Update session with auto-checkout
+    const checkoutTime = new Date();
+    activeSession.checkOutTime = checkoutTime;
+    activeSession.status = 'auto-checkout';
+    activeSession.totalSales = stats.totalSales;
+    activeSession.totalTransactions = stats.totalTransactions;
+    activeSession.screenShareEnabled = false;
+    activeSession.checkoutReason = reason;
+    activeSession.checkoutReasonDetails = reasonDetails;
+    activeSession.sessionDuration = Math.round((checkoutTime - activeSession.checkInTime) / (1000 * 60));
+
+    await activeSession.save();
+
+    // Emit auto-checkout event via socket
+    if (req.io) {
+      req.io.emit('cashier-auto-checked-out', {
+        cashierId,
+        sessionData: activeSession,
+        reason: activeSession.checkoutReason,
+        reasonDetails: activeSession.checkoutReasonDetails
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Auto checked out. Reason: ${reason}`,
+      session: activeSession,
+      finalStats: stats
+    });
+
+  } catch (error) {
+    console.error('Auto check-out error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during auto check-out',
       error: error.message
     });
   }
@@ -211,7 +329,18 @@ exports.updateScreenShareStatus = async (req, res) => {
       session.screenShareEnabled = isSharing;
       session.peerId = peerId;
       session.lastScreenShareUpdate = new Date();
+      session.lastActivityTime = new Date();
       await session.save();
+
+      // Emit screen share status update
+      if (req.io) {
+        req.io.emit('screen-share-status-updated', {
+          cashierId,
+          isSharing,
+          peerId,
+          sessionId: session._id
+        });
+      }
     }
 
     res.json({
@@ -229,6 +358,40 @@ exports.updateScreenShareStatus = async (req, res) => {
     });
   }
 };
+
+// Update activity timestamp
+exports.updateActivity = async (req, res) => {
+  try {
+    const { cashierId } = req.params;
+    const today = new Date().toISOString().split('T')[0];
+
+    const session = await CashierSession.findOne({
+      cashierId,
+      sessionDate: today,
+      status: 'active'
+    });
+
+    if (session) {
+      session.lastActivityTime = new Date();
+      await session.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'Activity updated'
+    });
+
+  } catch (error) {
+    console.error('Update activity error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating activity',
+      error: error.message
+    });
+  }
+};
+
+// Get session history
 exports.getSessionHistory = async (req, res) => {
   try {
     const cashierId = req.params.cashierId;
@@ -246,6 +409,67 @@ exports.getSessionHistory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server error',
+      error: error.message
+    });
+  }
+};
+
+// Mark session as read by admin
+exports.markAsReadByAdmin = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { adminId } = req.body;
+
+    const session = await CashierSession.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found'
+      });
+    }
+
+    session.isReadByAdmin = true;
+    session.adminReadAt = new Date();
+    session.adminReadBy = adminId;
+    await session.save();
+
+    res.json({
+      success: true,
+      message: 'Session marked as read',
+      session
+    });
+
+  } catch (error) {
+    console.error('Mark as read error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error marking session as read',
+      error: error.message
+    });
+  }
+};
+
+// Get unread sessions for admin
+exports.getUnreadSessions = async (req, res) => {
+  try {
+    const unreadSessions = await CashierSession.find({
+      isReadByAdmin: false,
+      status: { $in: ['completed', 'auto-checkout'] }
+    })
+    .populate('cashierId', 'username email')
+    .sort({ checkOutTime: -1 });
+
+    res.json({
+      success: true,
+      unreadSessions,
+      count: unreadSessions.length
+    });
+
+  } catch (error) {
+    console.error('Get unread sessions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching unread sessions',
       error: error.message
     });
   }

@@ -1,6 +1,7 @@
 const User = require("../models/userModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+
 const { jwtConfig } = require("../config");
 
 // Helper to verify JWT and return decoded user or respond error
@@ -339,11 +340,14 @@ const getUserStats = async (req, res) => {
   }
 };
 
+
+
 module.exports = { 
   getUsers, 
   getUserById, 
   updateUser, 
   deleteUser, 
   createUser,
-  getUserStats
+  getUserStats,
+
 };

@@ -1,5 +1,6 @@
 const { Products } = require("../models/productModel");
 const { Order } = require("../models/orderModel");
+const CashierSession = require('../models/cashierModel');
 
 // Get quick stats for cashier dashboard
 exports.getCashierStats = async (req, res) => {
@@ -7,6 +8,16 @@ exports.getCashierStats = async (req, res) => {
     const cashierId = req.params.cashierId;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    // Update activity timestamp
+    await CashierSession.findOneAndUpdate(
+      { 
+        cashierId, 
+        sessionDate: today.toISOString().split('T')[0],
+        status: 'active' 
+      },
+      { lastActivityTime: new Date() }
+    );
 
     // Fetch orders made today by this cashier (filter by 'date' field)
     const todaysOrders = await Order.find({
@@ -54,16 +65,35 @@ exports.getCashierStats = async (req, res) => {
 exports.getRecentTransactions = async (req, res) => {
   try {
     const cashierId = req.params.cashierId;
-    //fetch totalAmount from order model with respect to cashierID
-    const totalAmount = await Order.find({ cashierId }).select("totalPrice");
+
+    // Update activity timestamp
+    const today = new Date().toISOString().split('T')[0];
+    await CashierSession.findOneAndUpdate(
+      { 
+        cashierId, 
+        sessionDate: today,
+        status: 'active' 
+      },
+      { lastActivityTime: new Date() }
+    );
 
     // Sort by creation time (createdAt) descending and limit to 5
-    // Assuming timestamps: true in your schema adds createdAt
     const transactions = await Order.find({ cashierId })
       .sort({ date: -1 })
       .limit(5);
 
-    res.json(transactions , totalAmount);
+    // Get total amount for all orders by this cashier
+    const totalAmountResult = await Order.aggregate([
+      { $match: { cashierId } },
+      { $group: { _id: null, totalAmount: { $sum: '$totalPrice' } } }
+    ]);
+
+    const totalAmount = totalAmountResult.length > 0 ? totalAmountResult[0].totalAmount : 0;
+
+    res.json({
+      transactions,
+      totalAmount: totalAmount.toFixed(2)
+    });
   } catch (error) {
     console.error("Error in getRecentTransactions:", error);
     res.status(500).json({ message: "Server error" });
@@ -76,7 +106,10 @@ exports.getLatestProducts = async (req, res) => {
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-    const products = await Products.find({ createdAt: { $gte: threeDaysAgo } }).sort({
+    const products = await Products.find({ 
+      createdAt: { $gte: threeDaysAgo },
+      quantity: { $gt: 0 } // Only show products in stock
+    }).sort({
       createdAt: -1,
     });
 
@@ -91,7 +124,17 @@ exports.getLatestProducts = async (req, res) => {
 exports.getOrdersByCashier = async (req, res) => {
   try {
     const cashierId = req.params.cashierId;
-   
+
+    // Update activity timestamp
+    const today = new Date().toISOString().split('T')[0];
+    await CashierSession.findOneAndUpdate(
+      { 
+        cashierId, 
+        sessionDate: today,
+        status: 'active' 
+      },
+      { lastActivityTime: new Date() }
+    );
 
     const orders = await Order.find({ cashierId })
       .sort({ createdAt: -1 })
@@ -108,6 +151,20 @@ exports.getOrdersByCashier = async (req, res) => {
 exports.getProductByBarcode = async (req, res) => {
   try {
     const barcode = req.params.barcode;
+    const cashierId = req.headers['cashier-id']; // Get cashier ID from headers
+
+    // Update activity timestamp if cashier ID is provided
+    if (cashierId) {
+      const today = new Date().toISOString().split('T')[0];
+      await CashierSession.findOneAndUpdate(
+        { 
+          cashierId, 
+          sessionDate: today,
+          status: 'active' 
+        },
+        { lastActivityTime: new Date() }
+      );
+    }
 
     const product = await Products.findOne({ barcode });
 
