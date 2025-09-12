@@ -3,7 +3,7 @@ const router = express.Router();
 const { 
   getDashboardStats,
   getCashierMonitoringData,
-  sendMessageToCashier,
+
   getActiveCashiers,
   forceStopScreenShare,
   getCashierAnalytics,
@@ -31,7 +31,6 @@ router.get('/supervisor/active-cashiers', getActiveCashiers);
 router.get('/supervisor/cashier-monitoring/:cashierId', getCashierMonitoringData);
 
 // Send message to cashier
-router.post('/supervisor/send-message', sendMessageToCashier);
 
 // Force stop screen sharing
 router.post('/supervisor/force-stop-screen-share/:cashierId', forceStopScreenShare);

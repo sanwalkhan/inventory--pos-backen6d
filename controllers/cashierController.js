@@ -1,8 +1,9 @@
-const CashierSession = require('../models/cashierModel');
+const CashierDailySession = require('../models/cashierModel');
 const { Order } = require('../models/orderModel');
 const User = require('../models/userModel');
+const { createCashierNotification } = require('./notificationController');
 
-// Enhanced check in with screen sharing preparation
+// Enhanced check in with notification
 exports.checkIn = async (req, res) => {
   try {
     const { cashierId } = req.body;
@@ -24,45 +25,87 @@ exports.checkIn = async (req, res) => {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const checkInTime = new Date();
 
-    // Check if cashier already has an active session today
-    const existingSession = await CashierSession.findOne({
+    // Find or create daily session document
+    let dailySession = await CashierDailySession.findOne({
       cashierId,
-      sessionDate: today,
-      status: 'active'
+      sessionDate: today
     });
 
-    if (existingSession) {
-      // Update last activity time
-      existingSession.lastActivityTime = new Date();
-      await existingSession.save();
+    if (!dailySession) {
+      // Create new daily session document
+      dailySession = new CashierDailySession({
+        cashierId,
+        cashierName: cashier.username,
+        sessionDate: today,
+        sessions: [],
+        autoScreenShareRequested: true
+      });
+    }
+
+    // Check if there's already an active session
+    const activeSessionIndex = dailySession.sessions.findIndex(session => session.isActive);
+    
+    if (activeSessionIndex !== -1) {
+      // Update existing active session's last activity
+      dailySession.sessions[activeSessionIndex].lastActivityTime = checkInTime;
+      dailySession.lastActivityTime = checkInTime;
+      await dailySession.save();
 
       return res.status(200).json({
         success: true,
         message: 'Already checked in',
-        session: existingSession,
+        session: {
+          _id: dailySession._id,
+          checkInTime: dailySession.sessions[activeSessionIndex].checkInTime,
+          totalSales: dailySession.totalDailySales,
+          totalTransactions: dailySession.totalDailyTransactions,
+          currentlyActive: true
+        },
         screenShareEnabled: true
       });
     }
 
-    // Create new session with screen sharing flag
-    const newSession = new CashierSession({
-      cashierId,
-      cashierName: cashier.username,
-      checkInTime: new Date(),
-      sessionDate: today,
+    // Create new session entry
+    const newSessionEntry = {
+      checkInTime,
+      isActive: true,
       screenShareEnabled: true,
       autoScreenShareRequested: true,
-      lastActivityTime: new Date()
-    });
+      lastActivityTime: checkInTime
+    };
 
-    await newSession.save();
+    dailySession.sessions.push(newSessionEntry);
+    dailySession.currentlyActive = true;
+    dailySession.activeSessionIndex = dailySession.sessions.length - 1;
+    dailySession.lastActivityTime = checkInTime;
+
+    await dailySession.save();
+
+    // Create notification
+    try {
+      await createCashierNotification('check-in', {
+        cashierId,
+        cashierName: cashier.username
+      }, {
+        _id: dailySession._id,
+        checkInTime: newSessionEntry.checkInTime
+      }, req.io);
+    } catch (notificationError) {
+      console.error('Failed to create check-in notification:', notificationError);
+    }
 
     // Emit check-in event via socket
     if (req.io) {
       req.io.emit('cashier-checked-in', {
         cashierId,
-        sessionData: newSession,
+        sessionData: {
+          _id: dailySession._id,
+          checkInTime: newSessionEntry.checkInTime,
+          totalSales: dailySession.totalDailySales,
+          totalTransactions: dailySession.totalDailyTransactions
+        },
         cashierName: cashier.username
       });
     }
@@ -70,7 +113,13 @@ exports.checkIn = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Checked in successfully. Screen sharing will start automatically.',
-      session: newSession,
+      session: {
+        _id: dailySession._id,
+        checkInTime: newSessionEntry.checkInTime,
+        totalSales: dailySession.totalDailySales,
+        totalTransactions: dailySession.totalDailyTransactions,
+        currentlyActive: true
+      },
       screenShareEnabled: true
     });
 
@@ -84,7 +133,7 @@ exports.checkIn = async (req, res) => {
   }
 };
 
-// Enhanced check out with screen sharing cleanup and reason tracking
+// Enhanced check out with notification
 exports.checkOut = async (req, res) => {
   try {
     const { cashierId, reason, reasonDetails } = req.body;
@@ -97,20 +146,32 @@ exports.checkOut = async (req, res) => {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const checkOutTime = new Date();
 
-    // Find active session for today
-    const activeSession = await CashierSession.findOne({
+    // Find daily session document
+    const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      status: 'active'
+      currentlyActive: true
     });
 
-    if (!activeSession) {
+    if (!dailySession) {
       return res.status(404).json({
         success: false,
         message: 'No active session found for today'
       });
     }
+
+    // Find active session
+    const activeSessionIndex = dailySession.activeSessionIndex;
+    if (activeSessionIndex === null || !dailySession.sessions[activeSessionIndex] || !dailySession.sessions[activeSessionIndex].isActive) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active session found'
+      });
+    }
+
+    const activeSession = dailySession.sessions[activeSessionIndex];
 
     // Calculate session statistics
     const sessionStats = await Order.aggregate([
@@ -119,7 +180,7 @@ exports.checkOut = async (req, res) => {
           cashierId: cashierId,
           date: {
             $gte: activeSession.checkInTime,
-            $lte: new Date()
+            $lte: checkOutTime
           }
         }
       },
@@ -134,24 +195,52 @@ exports.checkOut = async (req, res) => {
 
     const stats = sessionStats[0] || { totalSales: 0, totalTransactions: 0 };
 
-    // Update session with checkout time and stats
-    const checkoutTime = new Date();
-    activeSession.checkOutTime = checkoutTime;
-    activeSession.status = reason === 'manual' ? 'completed' : 'auto-checkout';
-    activeSession.totalSales = stats.totalSales;
-    activeSession.totalTransactions = stats.totalTransactions;
-    activeSession.screenShareEnabled = false;
+    // Update the active session
+    activeSession.checkOutTime = checkOutTime;
+    activeSession.isActive = false;
     activeSession.checkoutReason = reason || 'manual';
     activeSession.checkoutReasonDetails = reasonDetails || null;
-    activeSession.sessionDuration = Math.round((checkoutTime - activeSession.checkInTime) / (1000 * 60));
+    activeSession.sessionDuration = Math.round((checkOutTime - activeSession.checkInTime) / (1000 * 60));
+    activeSession.salesDuringSession = stats.totalSales;
+    activeSession.transactionsDuringSession = stats.totalTransactions;
+    activeSession.screenShareEnabled = false;
 
-    await activeSession.save();
+    // Update daily session status
+    dailySession.currentlyActive = false;
+    dailySession.activeSessionIndex = null;
+    dailySession.lastActivityTime = checkOutTime;
+
+    await dailySession.save();
+
+    // Create notification
+    try {
+      await createCashierNotification('check-out', {
+        cashierId,
+        cashierName: dailySession.cashierName
+      }, {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        checkOutTime: activeSession.checkOutTime,
+        sessionDuration: activeSession.sessionDuration,
+        salesDuringSession: activeSession.salesDuringSession,
+        transactionsDuringSession: activeSession.transactionsDuringSession,
+        reason: activeSession.checkoutReason
+      }, req.io);
+    } catch (notificationError) {
+      console.error('Failed to create check-out notification:', notificationError);
+    }
 
     // Emit check-out event via socket
     if (req.io) {
       req.io.emit('cashier-checked-out', {
         cashierId,
-        sessionData: activeSession,
+        sessionData: {
+          _id: dailySession._id,
+          checkInTime: activeSession.checkInTime,
+          checkOutTime: activeSession.checkOutTime,
+          totalSales: dailySession.totalDailySales,
+          totalTransactions: dailySession.totalDailyTransactions
+        },
         reason: activeSession.checkoutReason,
         reasonDetails: activeSession.checkoutReasonDetails
       });
@@ -160,8 +249,14 @@ exports.checkOut = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Checked out successfully. Reason: ${reason || 'manual'}`,
-      session: activeSession,
-      finalStats: stats
+      session: {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        checkOutTime: activeSession.checkOutTime,
+        totalSales: dailySession.totalDailySales,
+        totalTransactions: dailySession.totalDailyTransactions
+      },
+      sessionStats: stats
     });
 
   } catch (error) {
@@ -174,7 +269,7 @@ exports.checkOut = async (req, res) => {
   }
 };
 
-// Auto checkout for tab switching, minimizing, etc.
+// Auto checkout with notification
 exports.autoCheckOut = async (req, res) => {
   try {
     const { cashierId, reason, reasonDetails } = req.body;
@@ -187,20 +282,32 @@ exports.autoCheckOut = async (req, res) => {
     }
 
     const today = new Date().toISOString().split('T')[0];
+    const checkOutTime = new Date();
 
-    // Find active session for today
-    const activeSession = await CashierSession.findOne({
+    // Find daily session document
+    const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      status: 'active'
+      currentlyActive: true
     });
 
-    if (!activeSession) {
+    if (!dailySession) {
       return res.status(404).json({
         success: false,
         message: 'No active session found for today'
       });
     }
+
+    // Find active session
+    const activeSessionIndex = dailySession.activeSessionIndex;
+    if (activeSessionIndex === null || !dailySession.sessions[activeSessionIndex] || !dailySession.sessions[activeSessionIndex].isActive) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active session found'
+      });
+    }
+
+    const activeSession = dailySession.sessions[activeSessionIndex];
 
     // Calculate session statistics
     const sessionStats = await Order.aggregate([
@@ -209,7 +316,7 @@ exports.autoCheckOut = async (req, res) => {
           cashierId: cashierId,
           date: {
             $gte: activeSession.checkInTime,
-            $lte: new Date()
+            $lte: checkOutTime
           }
         }
       },
@@ -224,24 +331,51 @@ exports.autoCheckOut = async (req, res) => {
 
     const stats = sessionStats[0] || { totalSales: 0, totalTransactions: 0 };
 
-    // Update session with auto-checkout
-    const checkoutTime = new Date();
-    activeSession.checkOutTime = checkoutTime;
-    activeSession.status = 'auto-checkout';
-    activeSession.totalSales = stats.totalSales;
-    activeSession.totalTransactions = stats.totalTransactions;
-    activeSession.screenShareEnabled = false;
+    // Update the active session
+    activeSession.checkOutTime = checkOutTime;
+    activeSession.isActive = false;
     activeSession.checkoutReason = reason;
     activeSession.checkoutReasonDetails = reasonDetails;
-    activeSession.sessionDuration = Math.round((checkoutTime - activeSession.checkInTime) / (1000 * 60));
+    activeSession.sessionDuration = Math.round((checkOutTime - activeSession.checkInTime) / (1000 * 60));
+    activeSession.salesDuringSession = stats.totalSales;
+    activeSession.transactionsDuringSession = stats.totalTransactions;
+    activeSession.screenShareEnabled = false;
 
-    await activeSession.save();
+    // Update daily session status
+    dailySession.currentlyActive = false;
+    dailySession.activeSessionIndex = null;
+    dailySession.lastActivityTime = checkOutTime;
+
+    await dailySession.save();
+
+    // Create notification
+    try {
+      await createCashierNotification('auto-checkout', {
+        cashierId,
+        cashierName: dailySession.cashierName
+      }, {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        checkOutTime: activeSession.checkOutTime,
+        sessionDuration: activeSession.sessionDuration,
+        reason: activeSession.checkoutReason,
+        reasonDetails: activeSession.checkoutReasonDetails
+      }, req.io);
+    } catch (notificationError) {
+      console.error('Failed to create auto-checkout notification:', notificationError);
+    }
 
     // Emit auto-checkout event via socket
     if (req.io) {
       req.io.emit('cashier-auto-checked-out', {
         cashierId,
-        sessionData: activeSession,
+        sessionData: {
+          _id: dailySession._id,
+          checkInTime: activeSession.checkInTime,
+          checkOutTime: activeSession.checkOutTime,
+          totalSales: dailySession.totalDailySales,
+          totalTransactions: dailySession.totalDailyTransactions
+        },
         reason: activeSession.checkoutReason,
         reasonDetails: activeSession.checkoutReasonDetails
       });
@@ -250,8 +384,14 @@ exports.autoCheckOut = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Auto checked out. Reason: ${reason}`,
-      session: activeSession,
-      finalStats: stats
+      session: {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        checkOutTime: activeSession.checkOutTime,
+        totalSales: dailySession.totalDailySales,
+        totalTransactions: dailySession.totalDailyTransactions
+      },
+      sessionStats: stats
     });
 
   } catch (error) {
@@ -264,39 +404,115 @@ exports.autoCheckOut = async (req, res) => {
   }
 };
 
-// Get enhanced session status
+// Update screen sharing status with notification
+exports.updateScreenShareStatus = async (req, res) => {
+  try {
+    const { cashierId } = req.params;
+    const { isSharing, peerId } = req.body;
+    
+    const today = new Date().toISOString().split('T')[0];
+    
+    const dailySession = await CashierDailySession.findOne({
+      cashierId,
+      sessionDate: today,
+      currentlyActive: true
+    });
+
+    if (dailySession && dailySession.activeSessionIndex !== null) {
+      const activeSession = dailySession.sessions[dailySession.activeSessionIndex];
+      const wasSharing = activeSession.screenShareEnabled;
+      
+      activeSession.screenShareEnabled = isSharing;
+      activeSession.peerId = peerId;
+      activeSession.lastScreenShareUpdate = new Date();
+      activeSession.lastActivityTime = new Date();
+      dailySession.lastActivityTime = new Date();
+      
+      await dailySession.save();
+
+      // Create notification if screen sharing was disconnected
+      if (wasSharing && !isSharing) {
+        try {
+          await createCashierNotification('screen-share-disconnected', {
+            cashierId,
+            cashierName: dailySession.cashierName
+          }, {
+            _id: dailySession._id
+          }, req.io);
+        } catch (notificationError) {
+          console.error('Failed to create screen share notification:', notificationError);
+        }
+      }
+
+      // Emit screen share status update
+      if (req.io) {
+        req.io.emit('screen-share-status-updated', {
+          cashierId,
+          isSharing,
+          peerId,
+          sessionId: dailySession._id
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Screen sharing ${isSharing ? 'enabled' : 'disabled'}`,
+      session: dailySession
+    });
+
+  } catch (error) {
+    console.error('Update screen share status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating screen share status',
+      error: error.message
+    });
+  }
+};
+
+// Keep all other existing methods unchanged
 exports.getSessionStatus = async (req, res) => {
   try {
     const { cashierId } = req.params;
     const today = new Date().toISOString().split('T')[0];
 
-    const activeSession = await CashierSession.findOne({
+    const dailySession = await CashierDailySession.findOne({
       cashierId,
-      sessionDate: today,
-      status: 'active'
+      sessionDate: today
     });
 
-    // Get today's performance if session is active
+    let hasActiveSession = false;
+    let activeSession = null;
     let todaysPerformance = null;
-    if (activeSession) {
-      const todaysOrders = await Order.find({
-        cashierId,
-        date: { $gte: new Date(today + 'T00:00:00.000Z') }
-      });
 
+    if (dailySession) {
+      hasActiveSession = dailySession.currentlyActive;
+      
+      if (hasActiveSession && dailySession.activeSessionIndex !== null) {
+        activeSession = dailySession.sessions[dailySession.activeSessionIndex];
+      }
+
+      // Get today's performance
       todaysPerformance = {
-        sales: todaysOrders.reduce((sum, order) => sum + order.totalPrice, 0),
-        transactions: todaysOrders.length,
-        itemsSold: todaysOrders.reduce((sum, order) => {
-          return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
-        }, 0)
+        sales: dailySession.totalDailySales,
+        transactions: dailySession.totalDailyTransactions,
+        totalCheckIns: dailySession.totalCheckIns,
+        totalCheckOuts: dailySession.totalCheckOuts,
+        totalSessionDuration: dailySession.totalSessionDuration,
+        checkoutReasonsSummary: dailySession.checkoutReasonsSummary
       };
     }
 
     res.status(200).json({
       success: true,
-      hasActiveSession: !!activeSession,
-      session: activeSession,
+      hasActiveSession,
+      session: activeSession ? {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        totalSales: dailySession.totalDailySales,
+        totalTransactions: dailySession.totalDailyTransactions
+      } : null,
       todaysPerformance,
       screenShareEnabled: activeSession?.screenShareEnabled || false
     });
@@ -311,69 +527,22 @@ exports.getSessionStatus = async (req, res) => {
   }
 };
 
-// Update screen sharing status
-exports.updateScreenShareStatus = async (req, res) => {
-  try {
-    const { cashierId } = req.params;
-    const { isSharing, peerId } = req.body;
-    
-    const today = new Date().toISOString().split('T')[0];
-    
-    const session = await CashierSession.findOne({
-      cashierId,
-      sessionDate: today,
-      status: 'active'
-    });
-
-    if (session) {
-      session.screenShareEnabled = isSharing;
-      session.peerId = peerId;
-      session.lastScreenShareUpdate = new Date();
-      session.lastActivityTime = new Date();
-      await session.save();
-
-      // Emit screen share status update
-      if (req.io) {
-        req.io.emit('screen-share-status-updated', {
-          cashierId,
-          isSharing,
-          peerId,
-          sessionId: session._id
-        });
-      }
-    }
-
-    res.json({
-      success: true,
-      message: `Screen sharing ${isSharing ? 'enabled' : 'disabled'}`,
-      session
-    });
-
-  } catch (error) {
-    console.error('Update screen share status error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error updating screen share status',
-      error: error.message
-    });
-  }
-};
-
-// Update activity timestamp
 exports.updateActivity = async (req, res) => {
   try {
     const { cashierId } = req.params;
     const today = new Date().toISOString().split('T')[0];
 
-    const session = await CashierSession.findOne({
+    const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      status: 'active'
+      currentlyActive: true
     });
 
-    if (session) {
-      session.lastActivityTime = new Date();
-      await session.save();
+    if (dailySession && dailySession.activeSessionIndex !== null) {
+      const activeSession = dailySession.sessions[dailySession.activeSessionIndex];
+      activeSession.lastActivityTime = new Date();
+      dailySession.lastActivityTime = new Date();
+      await dailySession.save();
     }
 
     res.json({
@@ -391,19 +560,44 @@ exports.updateActivity = async (req, res) => {
   }
 };
 
-// Get session history
 exports.getSessionHistory = async (req, res) => {
   try {
     const cashierId = req.params.cashierId;
     const today = new Date().toISOString().split('T')[0];
 
-    // Get session history for the cashier
-    const sessionHistory = await Order.find({
+    // Get daily session with all check-ins/check-outs
+    const dailySession = await CashierDailySession.findOne({
       cashierId,
-      date: { $gte: today }
+      sessionDate: today
+    });
+
+    if (!dailySession) {
+      return res.json({
+        success: true,
+        sessionHistory: [],
+        dailyStats: null
+      });
+    }
+
+    // Get order history for the day
+    const orderHistory = await Order.find({
+      cashierId,
+      date: { $gte: new Date(today + 'T00:00:00.000Z') }
     }).sort({ date: -1 });
 
-    res.json(sessionHistory);
+    res.json({
+      success: true,
+      sessionHistory: dailySession.sessions,
+      orderHistory,
+      dailyStats: {
+        totalCheckIns: dailySession.totalCheckIns,
+        totalCheckOuts: dailySession.totalCheckOuts,
+        totalSessionDuration: dailySession.totalSessionDuration,
+        totalDailySales: dailySession.totalDailySales,
+        totalDailyTransactions: dailySession.totalDailyTransactions,
+        checkoutReasonsSummary: dailySession.checkoutReasonsSummary
+      }
+    });
   } catch (error) {
     console.error('Error fetching session history:', error);
     res.status(500).json({
@@ -414,29 +608,28 @@ exports.getSessionHistory = async (req, res) => {
   }
 };
 
-// Mark session as read by admin
 exports.markAsReadByAdmin = async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { adminId } = req.body;
 
-    const session = await CashierSession.findById(sessionId);
-    if (!session) {
+    const dailySession = await CashierDailySession.findById(sessionId);
+    if (!dailySession) {
       return res.status(404).json({
         success: false,
-        message: 'Session not found'
+        message: 'Daily session not found'
       });
     }
 
-    session.isReadByAdmin = true;
-    session.adminReadAt = new Date();
-    session.adminReadBy = adminId;
-    await session.save();
+    dailySession.isReadByAdmin = true;
+    dailySession.adminReadAt = new Date();
+    dailySession.adminReadBy = adminId;
+    await dailySession.save();
 
     res.json({
       success: true,
-      message: 'Session marked as read',
-      session
+      message: 'Daily session marked as read',
+      session: dailySession
     });
 
   } catch (error) {
@@ -449,15 +642,15 @@ exports.markAsReadByAdmin = async (req, res) => {
   }
 };
 
-// Get unread sessions for admin
 exports.getUnreadSessions = async (req, res) => {
   try {
-    const unreadSessions = await CashierSession.find({
+    const unreadSessions = await CashierDailySession.find({
       isReadByAdmin: false,
-      status: { $in: ['completed', 'auto-checkout'] }
+      currentlyActive: false,
+      totalCheckOuts: { $gt: 0 }
     })
     .populate('cashierId', 'username email')
-    .sort({ checkOutTime: -1 });
+    .sort({ updatedAt: -1 });
 
     res.json({
       success: true,
@@ -470,6 +663,47 @@ exports.getUnreadSessions = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching unread sessions',
+      error: error.message
+    });
+  }
+};
+
+exports.getAllDailySessions = async (req, res) => {
+  try {
+    const { startDate, endDate, cashierId } = req.query;
+    
+    let query = {};
+    
+    if (cashierId) {
+      query.cashierId = cashierId;
+    }
+    
+    if (startDate && endDate) {
+      query.sessionDate = {
+        $gte: startDate,
+        $lte: endDate
+      };
+    } else if (startDate) {
+      query.sessionDate = { $gte: startDate };
+    } else if (endDate) {
+      query.sessionDate = { $lte: endDate };
+    }
+
+    const dailySessions = await CashierDailySession.find(query)
+      .populate('cashierId', 'username email')
+      .sort({ sessionDate: -1, createdAt: -1 });
+
+    res.json({
+      success: true,
+      dailySessions,
+      count: dailySessions.length
+    });
+
+  } catch (error) {
+    console.error('Get all daily sessions error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching daily sessions',
       error: error.message
     });
   }

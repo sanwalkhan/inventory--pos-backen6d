@@ -176,3 +176,51 @@ exports.getProductByBarcode = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+exports.getProductById = async (req, res) => {
+  try {
+    const productId = req.params.id;
+    const cashierId = req.headers['cashier-id']; // Get cashier ID from headers
+
+    // Update activity timestamp if cashier ID is provided
+    if (cashierId) {
+      const today = new Date().toISOString().split('T')[0];
+      await CashierSession.findOneAndUpdate(
+        { 
+          cashierId, 
+          sessionDate: today,
+          status: 'active' 
+        },
+        { lastActivityTime: new Date() }
+      );
+    }
+
+    const product = await Products.findById(productId);
+
+    if (!product) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Product not found" 
+      });
+    }
+
+    res.json({
+      success: true,
+      ...product.toObject()
+    });
+  } catch (error) {
+    console.error("Error in getProductById:", error);
+    
+    // Handle invalid ObjectId
+    if (error.name === 'CastError') {
+      return res.status(404).json({ 
+        success: false,
+        message: "Invalid product ID" 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      message: "Server error" 
+    });
+  }
+};

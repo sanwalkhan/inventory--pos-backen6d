@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/cashierDashboardController");
+router.get('/products/:id', controller.getProductById);
 
 // Stats for cashier dashboard
 router.get("/cashier/stats/:cashierId", controller.getCashierStats);

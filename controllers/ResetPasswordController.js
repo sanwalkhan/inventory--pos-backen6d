@@ -114,6 +114,7 @@ exports.resetPassword = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
     user.password = hashedPassword;
+    user.resetToken = null;
     await user.save();
 
     return res.status(200).json({ message: "Password reset successful" });
