@@ -993,6 +993,653 @@ const getCashierRankings = async (req, res) => {
   }
 };
 
+
+const getDetailedCashierReports = async (req, res) => {
+  try {
+    const { date } = req.query;
+    
+    let startDate, endDate;
+    
+    // Parse date parameter
+    if (date && date.includes('_')) {
+      // Date range format: "2024-01-01_2024-01-07"
+      const [start, end] = date.split('_');
+      startDate = start;
+      endDate = end;
+    } else if (date) {
+      // Single date format: "2024-01-01"
+      startDate = date;
+      endDate = date;
+    } else {
+      // Default to today
+      const today = new Date().toISOString().split('T')[0];
+      startDate = today;
+      endDate = today;
+    }
+
+    // Build match criteria for sessionDate (string format in your model)
+    const matchCriteria = {
+      sessionDate: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    };
+
+    // Aggregate cashier data with detailed session information
+    const cashierReports = await CashierDailySession.aggregate([
+      {
+        $match: matchCriteria
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'cashierId',
+          foreignField: '_id',
+          as: 'cashierInfo'
+        }
+      },
+      {
+        $unwind: '$cashierInfo'
+      },
+      {
+        $lookup: {
+          from: 'orders', // Use 'orders' collection, not 'sales'
+          let: { 
+            cashierId: '$cashierId',
+            sessionDate: '$sessionDate'
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$cashierId', '$$cashierId'] },
+                    { 
+                      $gte: [
+                        '$date', 
+                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T00:00:00.000Z'] } } }
+                      ] 
+                    },
+                    { 
+                      $lt: [
+                        '$date', 
+                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T23:59:59.999Z'] } } }
+                      ] 
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'dayOrders'
+        }
+      },
+      {
+        $group: {
+          _id: '$cashierId',
+          cashierName: { $first: '$cashierInfo.username' },
+          email: { $first: '$cashierInfo.email' },
+          
+          // Session metrics from your model structure
+          sessionCount: { $sum: { $size: { $ifNull: ['$sessions', []] } } },
+          currentlyActive: { $max: '$currentlyActive' },
+          
+          // Calculate total active minutes from sessions array
+          totalActiveMinutes: {
+            $sum: {
+              $sum: {
+                $map: {
+                  input: { $ifNull: ['$sessions', []] },
+                  as: 'session',
+                  in: {
+                    $divide: [
+                      {
+                        $subtract: [
+                          { 
+                            $cond: [
+                              { $ne: ['$$session.checkOutTime', null] },
+                              '$$session.checkOutTime',
+                              new Date()
+                            ]
+                          },
+                          '$$session.checkInTime'
+                        ]
+                      },
+                      60000 // Convert to minutes
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          
+          // Sales metrics from orders
+          totalSales: {
+            $sum: {
+              $sum: {
+                $map: {
+                  input: '$dayOrders',
+                  as: 'order',
+                  in: { $ifNull: ['$$order.totalPrice', 0] }
+                }
+              }
+            }
+          },
+          
+          totalTransactions: {
+            $sum: { $size: '$dayOrders' }
+          },
+          
+          // Collect session details
+          sessionDetails: {
+            $push: {
+              sessionDate: '$sessionDate',
+              sessions: '$sessions',
+              dailySales: {
+                $sum: {
+                  $map: {
+                    input: '$dayOrders',
+                    as: 'order',
+                    in: { $ifNull: ['$$order.totalPrice', 0] }
+                  }
+                }
+              },
+              dailyTransactions: { $size: '$dayOrders' },
+              totalCheckIns: '$totalCheckIns',
+              totalCheckOuts: '$totalCheckOuts',
+              checkoutReasonsSummary: '$checkoutReasonsSummary'
+            }
+          },
+          
+          // Get first and last activity across all sessions
+          firstCheckIn: {
+            $min: {
+              $min: {
+                $map: {
+                  input: { $ifNull: ['$sessions', []] },
+                  as: 'session',
+                  in: '$$session.checkInTime'
+                }
+              }
+            }
+          },
+          
+          lastCheckOut: {
+            $max: {
+              $max: {
+                $map: {
+                  input: { $ifNull: ['$sessions', []] },
+                  as: 'session',
+                  in: '$$session.checkOutTime'
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          cashierId: '$_id',
+          currentStatus: {
+            $cond: [
+              { $eq: ['$currentlyActive', true] },
+              'active',
+              'completed'
+            ]
+          },
+          averageSessionDuration: {
+            $cond: [
+              { $gt: ['$sessionCount', 0] },
+              { $divide: ['$totalActiveMinutes', '$sessionCount'] },
+              0
+            ]
+          },
+          performanceRating: {
+            $switch: {
+              branches: [
+                { case: { $gte: ['$totalSales', 10000] }, then: 'Excellent' },
+                { case: { $gte: ['$totalSales', 5000] }, then: 'Good' },
+                { case: { $gte: ['$totalSales', 2000] }, then: 'Average' },
+                { case: { $gte: ['$totalSales', 500] }, then: 'Below Average' }
+              ],
+              default: 'Poor'
+            }
+          }
+        }
+      },
+      {
+        $sort: { totalSales: -1 }
+      }
+    ]);
+
+    // Process the results to match your expected format
+    const processedReports = cashierReports.map(cashier => {
+      // Flatten all sessions from all days for this cashier
+      const allSessions = [];
+      cashier.sessionDetails.forEach(dayDetail => {
+        if (dayDetail.sessions && dayDetail.sessions.length > 0) {
+          dayDetail.sessions.forEach((session, index) => {
+            allSessions.push({
+              index: allSessions.length + 1,
+              sessionDate: dayDetail.sessionDate,
+              sessionId: session._id,
+              checkInTime: session.checkInTime,
+              checkOutTime: session.checkOutTime,
+              isActive: session.isActive,
+              checkoutReason: session.checkoutReason,
+              checkoutReasonDetails: session.checkoutReasonDetails,
+              duration: session.checkOutTime 
+                ? Math.round((new Date(session.checkOutTime) - new Date(session.checkInTime)) / 60000)
+                : Math.round((new Date() - new Date(session.checkInTime)) / 60000),
+              salesDuringSession: session.salesDuringSession || 0,
+              transactionsDuringSession: session.transactionsDuringSession || 0
+            });
+          });
+        }
+      });
+
+      return {
+        ...cashier,
+        totalActiveMinutes: Math.round(cashier.totalActiveMinutes || 0),
+        averageSessionDuration: Math.round(cashier.averageSessionDuration || 0),
+        totalSales: parseFloat((cashier.totalSales || 0).toFixed(2)),
+        averageSalePerTransaction: cashier.totalTransactions > 0 
+          ? parseFloat(((cashier.totalSales || 0) / cashier.totalTransactions).toFixed(2))
+          : 0,
+        sessionBreakdown: allSessions
+      };
+    });
+
+    res.json({
+      success: true,
+      data: processedReports,
+      summary: {
+        totalCashiers: processedReports.length,
+        activeCashiers: processedReports.filter(c => c.currentStatus === 'active').length,
+        totalSalesAllCashiers: processedReports.reduce((sum, c) => sum + (c.totalSales || 0), 0),
+        totalTransactionsAllCashiers: processedReports.reduce((sum, c) => sum + (c.totalTransactions || 0), 0),
+        totalActiveTimeAllCashiers: processedReports.reduce((sum, c) => sum + (c.totalActiveMinutes || 0), 0),
+        dateRange: { startDate, endDate }
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching detailed cashier reports:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch detailed cashier reports',
+      error: error.message
+    });
+  }
+};
+
+// Fixed version of getCashierPerformanceSummary
+const getCashierPerformanceSummary = async (req, res) => {
+  try {
+    const { date } = req.query;
+    
+    const targetDate = date || new Date().toISOString().split('T')[0];
+
+    const summary = await CashierDailySession.aggregate([
+      {
+        $match: {
+          sessionDate: targetDate
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'cashierId',
+          foreignField: '_id',
+          as: 'cashierInfo'
+        }
+      },
+      {
+        $lookup: {
+          from: 'orders',
+          let: { 
+            cashierId: '$cashierId',
+            sessionDate: '$sessionDate'
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$cashierId', '$$cashierId'] },
+                    { 
+                      $gte: [
+                        '$date', 
+                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T00:00:00.000Z'] } } }
+                      ] 
+                    },
+                    { 
+                      $lt: [
+                        '$date', 
+                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T23:59:59.999Z'] } } }
+                      ] 
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'orders'
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalCashiers: { $addToSet: '$cashierId' },
+          activeSessions: { 
+            $sum: { $cond: [{ $eq: ['$currentlyActive', true] }, 1, 0] }
+          },
+          totalSales: {
+            $sum: {
+              $sum: {
+                $map: {
+                  input: '$orders',
+                  as: 'order',
+                  in: { $ifNull: ['$$order.totalPrice', 0] }
+                }
+              }
+            }
+          },
+          totalTransactions: {
+            $sum: { $size: '$orders' }
+          },
+          topPerformers: {
+            $push: {
+              cashierId: '$cashierId',
+              cashierName: { $arrayElemAt: ['$cashierInfo.username', 0] },
+              sales: {
+                $sum: {
+                  $map: {
+                    input: '$orders',
+                    as: 'order',
+                    in: { $ifNull: ['$$order.totalPrice', 0] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          totalCashiers: { $size: '$totalCashiers' },
+          topPerformer: {
+            $let: {
+              vars: {
+                sorted: {
+                  $slice: [
+                    {
+                      $sortArray: {
+                        input: '$topPerformers',
+                        sortBy: { sales: -1 }
+                      }
+                    },
+                    1
+                  ]
+                }
+              },
+              in: { $arrayElemAt: ['$$sorted.cashierName', 0] }
+            }
+          }
+        }
+      }
+    ]);
+
+    const result = summary[0] || {
+      totalCashiers: 0,
+      activeSessions: 0,
+      totalSales: 0,
+      totalTransactions: 0,
+      topPerformer: 'N/A'
+    };
+
+    res.json({
+      success: true,
+      data: {
+        totalCashiers: result.totalCashiers,
+        activeSessions: result.activeSessions,
+        todayTotalSales: parseFloat((result.totalSales || 0).toFixed(2)),
+        todayTransactions: result.totalTransactions,
+        topPerformer: result.topPerformer || 'N/A'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching cashier performance summary:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch performance summary',
+      error: error.message
+    });
+  }
+};
+
+// Fixed version of exportCashierData
+const exportCashierData = async (req, res) => {
+  try {
+    const { date, format = 'csv', cashierIds } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Date parameter is required' 
+      });
+    }
+    
+    // Parse cashier IDs if provided
+    const selectedCashierIds = cashierIds ? 
+      cashierIds.split(',').map(id => new mongoose.Types.ObjectId(id)) : null;
+    
+    let startDate, endDate;
+    if (date.includes('_')) {
+      const [start, end] = date.split('_');
+      startDate = start;
+      endDate = end;
+    } else {
+      startDate = date;
+      endDate = date;
+    }
+
+    // Build match criteria
+    const matchCriteria = {
+      sessionDate: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    };
+
+    if (selectedCashierIds) {
+      matchCriteria.cashierId = { $in: selectedCashierIds };
+    }
+
+    // Use the same aggregation pattern as the fixed detailed reports
+    const exportData = await CashierDailySession.aggregate([
+      { $match: matchCriteria },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'cashierId',
+          foreignField: '_id',
+          as: 'cashierInfo'
+        }
+      },
+      {
+        $unwind: '$cashierInfo'
+      },
+      {
+        $lookup: {
+          from: 'orders',
+          let: { 
+            cashierId: '$cashierId',
+            sessionDate: '$sessionDate'
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$cashierId', '$$cashierId'] },
+                    { 
+                      $gte: [
+                        '$date', 
+                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T00:00:00.000Z'] } } }
+                      ] 
+                    },
+                    { 
+                      $lt: [
+                        '$date', 
+                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T23:59:59.999Z'] } } }
+                      ] 
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          as: 'orders'
+        }
+      },
+      {
+        $group: {
+          _id: '$cashierId',
+          cashierName: { $first: '$cashierInfo.username' },
+          email: { $first: '$cashierInfo.email' },
+          sessionCount: { $sum: { $size: { $ifNull: ['$sessions', []] } } },
+          totalActiveMinutes: {
+            $sum: {
+              $sum: {
+                $map: {
+                  input: { $ifNull: ['$sessions', []] },
+                  as: 'session',
+                  in: {
+                    $divide: [
+                      {
+                        $subtract: [
+                          { 
+                            $cond: [
+                              { $ne: ['$$session.checkOutTime', null] },
+                              '$$session.checkOutTime',
+                              new Date()
+                            ]
+                          },
+                          '$$session.checkInTime'
+                        ]
+                      },
+                      60000
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          totalSales: {
+            $sum: {
+              $sum: {
+                $map: {
+                  input: '$orders',
+                  as: 'order',
+                  in: { $ifNull: ['$$order.totalPrice', 0] }
+                }
+              }
+            }
+          },
+          totalTransactions: {
+            $sum: { $size: '$orders' }
+          },
+          firstCheckIn: {
+            $min: {
+              $min: {
+                $map: {
+                  input: { $ifNull: ['$sessions', []] },
+                  as: 'session',
+                  in: '$$session.checkInTime'
+                }
+              }
+            }
+          },
+          lastCheckOut: {
+            $max: {
+              $max: {
+                $map: {
+                  input: { $ifNull: ['$sessions', []] },
+                  as: 'session',
+                  in: '$$session.checkOutTime'
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $sort: { totalSales: -1 }
+      }
+    ]);
+
+    if (format === 'csv') {
+      // Generate CSV
+      const csvHeaders = [
+        'Cashier Name',
+        'Email',
+        'Total Sales',
+        'Total Transactions',
+        'Session Count',
+        'Total Active Time (minutes)',
+        'Average Session Duration (minutes)',
+        'First Check In',
+        'Last Check Out'
+      ];
+
+      const csvRows = exportData.map(cashier => [
+        cashier.cashierName,
+        cashier.email || '',
+        (cashier.totalSales || 0).toFixed(2),
+        cashier.totalTransactions || 0,
+        cashier.sessionCount || 0,
+        Math.round(cashier.totalActiveMinutes || 0),
+        Math.round((cashier.totalActiveMinutes || 0) / Math.max(cashier.sessionCount || 1, 1)),
+        cashier.firstCheckIn ? new Date(cashier.firstCheckIn).toLocaleString() : '',
+        cashier.lastCheckOut ? new Date(cashier.lastCheckOut).toLocaleString() : ''
+      ]);
+
+      const csvContent = [csvHeaders, ...csvRows]
+        .map(row => row.map(cell => `"${cell}"`).join(','))
+        .join('\n');
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="cashier-reports-${date}.csv"`);
+      res.send(csvContent);
+    } else {
+      // Return JSON
+      res.json({
+        success: true,
+        data: exportData,
+        exportedAt: new Date().toISOString(),
+        dateRange: { startDate, endDate }
+      });
+    }
+
+  } catch (error) {
+    console.error('Error exporting cashier data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to export cashier data',
+      error: error.message
+    });
+  }
+};
+
+
+// cashier stats
+
+
+
+
+
 module.exports = {
   getDashboardStats,
   getCashierMonitoringData,
@@ -1005,5 +1652,8 @@ module.exports = {
   getCashierStatsBYid,
   getSalesTrends,
   getHourlyPerformance,
-  getCashierRankings
+  getCashierRankings, 
+  exportCashierData,
+  getCashierPerformanceSummary,
+  getDetailedCashierReports
 };

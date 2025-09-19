@@ -12,7 +12,10 @@ const {
   getCashierStats,
   getSalesTrends,
   getHourlyPerformance,
-  getCashierRankings
+  getCashierRankings,
+  exportCashierData,
+  getCashierPerformanceSummary,
+  getDetailedCashierReports
  
 } = require("../controllers/supervisorController");
 
@@ -42,5 +45,8 @@ router.get('/supervisor/active-cashier-sessions', getCashierStatsBYid);
 router.get('/supervisor/sales-trends', getSalesTrends);
 router.get('/supervisor/hourly-performance', getHourlyPerformance);
 router.get('/supervisor/cashier-rankings', getCashierRankings);
+router.get('/supervisor/export-cashier-data', exportCashierData);
+router.get('/supervisor/cashier-performance-summary', getCashierPerformanceSummary);
+router.get('/supervisor/detailed-cashier-reports',getDetailedCashierReports);
 
 module.exports = router;

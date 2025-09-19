@@ -2,13 +2,14 @@ const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const cron = require("node-cron");
-require("dotenv").config({ path: ".env" });
+require("dotenv").config();
 require("./models/dbConnection");
 const http = require("http");
 const { Server } = require("socket.io");
 const {PeerServer} = require('peer');
 const Currency = require("./models/currancyModel");
-
+console.log(process.env);
+const allowedOrigins =process.env.FRONTEND_URL;
 (async () => {
   const count = await Currency.countDocuments();
   if (count === 0) {
@@ -23,9 +24,8 @@ const peerServer = PeerServer({
   allow_discovery: true,
   debug: true,
   corsOptions: {
-    origin: [
-      process.env.FRONTEND_URL || 'http://localhost:5173'
-    ],
+    origin:  allowedOrigins,
+
     credentials: true
   }
 });
@@ -57,7 +57,8 @@ const resetPasswordRouter = require("./routes/ResetPasswordRoutes");
 const currencyRouter = require("./routes/currencyRoutes");
 const NotificationRouter = require("./routes/notificationRoutes");
 
-const allowedOrigins = process.env.FRONTEND_URL || "http://localhost:5173";
+
+
 const app = express();
 const port = process.env.PORT;
 

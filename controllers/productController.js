@@ -1,14 +1,15 @@
 const { Products } = require("../models/productModel");
 const cloudinary = require("cloudinary").v2;
-const {Order}= require('../models/orderModel')
+const { Order } = require('../models/orderModel');
 
-// Helper: Calculate selling price
-function calculateSellingPrice({
+// Helper: Calculate selling prices with discount
+function calculateSellingPrices({
   price,
   saleTax = 0,
   withholdingTax = 0,
   gst = 0,
   margin = 12,
+  discount = 0,
 }) {
   // Convert inputs to floats
   price = parseFloat(price);
@@ -16,15 +17,25 @@ function calculateSellingPrice({
   withholdingTax = parseFloat(withholdingTax);
   gst = parseFloat(gst);
   margin = parseFloat(margin);
+  discount = parseFloat(discount);
 
+  // Calculate tax amounts
   const saleTaxAmount = (price * saleTax) / 100;
   const withholdingTaxAmount = (price * withholdingTax) / 100;
   const gstAmount = (price * gst) / 100;
   const marginAmount = (price * margin) / 100;
 
-  const sellingPrice = price + saleTaxAmount + gstAmount + withholdingTaxAmount + marginAmount;
+  // Selling price without discount (cost + taxes + margin)
+  const sellingPriceWithoutDiscount = price + saleTaxAmount + gstAmount + withholdingTaxAmount + marginAmount;
+  
+  // Apply discount to get final selling price
+  const discountAmount = (sellingPriceWithoutDiscount * discount) / 100;
+  const sellingPrice = sellingPriceWithoutDiscount - discountAmount;
 
-  return Number(sellingPrice.toFixed(2));
+  return {
+    sellingPriceWithoutDiscount: Number(sellingPriceWithoutDiscount.toFixed(2)),
+    sellingPrice: Number(sellingPrice.toFixed(2))
+  };
 }
 
 // Get all products
@@ -41,7 +52,7 @@ const getProducts = async (req, res) => {
   }
 };
 
-// Add product with actual price calculation
+// Add product with enhanced price calculation
 const addProduct = async (req, res) => {
   try {
     const {
@@ -55,6 +66,7 @@ const addProduct = async (req, res) => {
       saleTax = 0,
       withholdingTax = 0,
       gst = 0,
+      discount = 0,
     } = req.body;
 
     if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId || !req.file) {
@@ -78,13 +90,14 @@ const addProduct = async (req, res) => {
       return res.status(409).json({ message: "Product with this name already exists." });
     }
 
-    // Calculate selling price
-    const sellingPrice = calculateSellingPrice({
+    // Calculate selling prices
+    const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
       price,
       saleTax,
       withholdingTax,
       gst,
       margin: 12, // fixed margin %
+      discount,
     });
 
     const product = new Products({
@@ -98,7 +111,9 @@ const addProduct = async (req, res) => {
       saleTax: parseFloat(saleTax),
       withholdingTax: parseFloat(withholdingTax),
       gst: parseFloat(gst),
+      discount: parseFloat(discount),
       marginPercent: 12,
+      sellingPriceWithoutDiscount,
       sellingPrice,
       image: req.file.path,
       imagePublicId: req.file.filename,
@@ -112,7 +127,7 @@ const addProduct = async (req, res) => {
   }
 };
 
-// Update product with actual price calculation
+// Update product with enhanced price calculation
 const updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
@@ -127,6 +142,7 @@ const updateProduct = async (req, res) => {
       saleTax = 0,
       withholdingTax = 0,
       gst = 0,
+      discount = 0,
     } = req.body;
 
     if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId) {
@@ -159,13 +175,14 @@ const updateProduct = async (req, res) => {
       return res.status(409).json({ message: "Another product with this name already exists." });
     }
 
-    // Calculate selling price
-    const sellingPrice = calculateSellingPrice({
+    // Calculate selling prices
+    const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
       price,
       saleTax,
       withholdingTax,
       gst,
       margin: 12,
+      discount,
     });
 
     const updateData = {
@@ -179,7 +196,9 @@ const updateProduct = async (req, res) => {
       saleTax: parseFloat(saleTax),
       withholdingTax: parseFloat(withholdingTax),
       gst: parseFloat(gst),
+      discount: parseFloat(discount),
       marginPercent: 12,
+      sellingPriceWithoutDiscount,
       sellingPrice,
     };
 
@@ -257,14 +276,14 @@ const getProductsModel = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
+
 const getproductByname = async (req, res) => {
   try {
-    const { name } = req.query; // ✅ get query param
+    const { name } = req.query;
     if (!name) {
       return res.status(400).json({ message: "Product name is required" });
     }
 
-    // ✅ case-insensitive partial search
     const products = await Products.find({
       name: { $regex: name, $options: "i" }
     })
@@ -277,14 +296,14 @@ const getproductByname = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
 const getProductBycategory = async (req, res) => {
   try {
-    const { categoryId } = req.query; // ✅ get query param
+    const { categoryId } = req.query;
     if (!categoryId) {
       return res.status(400).json({ message: "Category id is required" });
     }
 
-    // ✅ case-insensitive partial search
     const products = await Products.find({
       categoryId: categoryId
     })
@@ -297,7 +316,7 @@ const getProductBycategory = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-// Backend - change route and parameter access
+
 const getProductByBarcode = async (req, res) => {
   try {
     const { barcode } = req.query;
@@ -325,29 +344,24 @@ const getProductByBarcode = async (req, res) => {
 
 const getProductWithStock = async (req, res) => {
   try {
-    const products = await Products.find({ quantity: { $gt: 0 } })
+    const products = await Products.find({ quantity: { $gt: 0 } });
     if (!products) {
       return res.status(404).json({ message: "No products found" });
     }
     res.status(200).json({ products });
-  }
-  catch (error) {
+  } catch (error) {
     console.error("Error fetching products:", error.message);
     res.status(500).json({ message: "Server error" });
   }
 };
-
-// Change route to not expect URL parameter
 
 const countEachProductOrder = async (req, res) => {
   try {
     const allProducts = await Products.find().lean();
     const allOrders = await Order.find().lean();
 
-    // Prepare a map to count sold quantities per productId
     const productOrderCountMap = {};
 
-    // Iterate through all orders' items to count quantities sold per product
     allOrders.forEach((order) => {
       if (order.items && Array.isArray(order.items)) {
         order.items.forEach((item) => {
@@ -363,19 +377,23 @@ const countEachProductOrder = async (req, res) => {
       }
     });
 
-    // Map products to include their sold quantity
     const productsWithSellingCount = allProducts.map((product) => ({
       _id: product._id,
       name: product.name,
       price: product.price,
-      quantity: product.quantity, // available stock
+      quantity: product.quantity,
       sellingCount: productOrderCountMap[product._id.toString()] || 0,
       barcode: product.barcode,
       description: product.description,
       categoryId: product.categoryId,
       subcategoryId: product.subcategoryId,
       image: product.image,
-      // Include other product fields as needed
+      saleTax: product.saleTax,
+      gst: product.gst,
+      withholdingTax: product.withholdingTax,
+      discount: product.discount,
+      sellingPriceWithoutDiscount: product.sellingPriceWithoutDiscount,
+      sellingPrice: product.sellingPrice,
     }));
 
     res.json(productsWithSellingCount);
@@ -384,6 +402,7 @@ const countEachProductOrder = async (req, res) => {
     res.status(500).json({ message: "Failed to get product selling counts" });
   }
 };
+
 module.exports = {
   getProducts,
   addProduct,
