@@ -118,7 +118,7 @@ app.use((req, res, next) => {
 app.use(bodyParser.json());
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   credentials: true
 }));
