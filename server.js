@@ -148,6 +148,9 @@ app.use("/api", cashierRouter);
 app.use("/api", supervisorRouter);
 app.use("/api", resetPasswordRouter);
 app.use("/api", currencyRouter);
+app.use("/",(req,res)=>{
+  res.send("Hello World");
+});
 
 // Schedule: Run every day at 12 AM Pakistan time
 cron.schedule(
