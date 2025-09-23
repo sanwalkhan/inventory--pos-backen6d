@@ -38,14 +38,71 @@ function calculateSellingPrices({
   };
 }
 
-// Get all products
+// Get all products with pagination
 const getProducts = async (req, res) => {
   try {
-    const products = await Products.find()
-      .populate("categoryId", "categoryName")
-      .populate("subcategoryId", "subcategoryName");
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const search = req.query.search || '';
+    const categoryId = req.query.categoryId || '';
+    const subcategoryId = req.query.subcategoryId || '';
+    const sortBy = req.query.sortBy || 'name';
+    const sortOrder = req.query.sortOrder || 'asc';
 
-    res.status(200).json({ message: "Products retrieved successfully", products });
+    // Build filter object
+    const filter = {};
+    
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { barcode: { $regex: search, $options: 'i' } }
+      ];
+    }
+    
+    if (categoryId) {
+      filter.categoryId = categoryId;
+    }
+    
+    if (subcategoryId) {
+      filter.subcategoryId = subcategoryId;
+    }
+
+    // Build sort object
+    const sort = {};
+    if (sortBy === 'price') {
+      sort.sellingPrice = sortOrder === 'asc' ? 1 : -1;
+    } else if (sortBy === 'quantity') {
+      sort.quantity = sortOrder === 'asc' ? 1 : -1;
+    } else {
+      sort.name = sortOrder === 'asc' ? 1 : -1;
+    }
+
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination
+    const totalProducts = await Products.countDocuments(filter);
+    const totalPages = Math.ceil(totalProducts / limit);
+
+    // Get products with pagination
+    const products = await Products.find(filter)
+      .populate("categoryId", "categoryName")
+      .populate("subcategoryId", "subcategoryName")
+      .sort(sort)
+      .skip(skip)
+      .limit(limit);
+
+    res.status(200).json({
+      message: "Products retrieved successfully",
+      products,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalProducts,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+        limit
+      }
+    });
   } catch (error) {
     console.error("Error retrieving products:", error.message);
     res.status(500).json({ message: "Server error" });
@@ -239,38 +296,78 @@ const deleteProduct = async (req, res) => {
   }
 };
 
-// Get by subcategory (query param)
+// Get by subcategory (query param) with pagination
 const getProductsBySubCategory = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const subcategoryId = req.query.subcategory;
+
     const filter = {};
-    if (req.query.subcategory) {
-      filter.subcategoryId = req.query.subcategory;
+    if (subcategoryId) {
+      filter.subcategoryId = subcategoryId;
     }
+
+    const skip = (page - 1) * limit;
+    const totalProducts = await Products.countDocuments(filter);
+    const totalPages = Math.ceil(totalProducts / limit);
 
     const products = await Products.find(filter)
       .populate("subcategoryId", "subcategoryName")
-      .populate("categoryId", "categoryName");
+      .populate("categoryId", "categoryName")
+      .skip(skip)
+      .limit(limit);
 
-    res.status(200).json({ products });
+    res.status(200).json({
+      products,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalProducts,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+        limit
+      }
+    });
   } catch (err) {
     console.error("Error fetching products:", err);
     res.status(500).json({ error: "Server error" });
   }
 };
 
-// Get by subcategory (URL param)
+// Get by subcategory (URL param) with pagination
 const getProductsModel = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const subcategoryId = req.params.subcategoryId;
+
     const filter = {};
-    if (req.params.subcategoryId) {
-      filter.subcategoryId = req.params.subcategoryId;
+    if (subcategoryId) {
+      filter.subcategoryId = subcategoryId;
     }
+
+    const skip = (page - 1) * limit;
+    const totalProducts = await Products.countDocuments(filter);
+    const totalPages = Math.ceil(totalProducts / limit);
 
     const products = await Products.find(filter)
       .populate("subcategoryId", "subcategoryName")
-      .populate("categoryId", "categoryName");
+      .populate("categoryId", "categoryName")
+      .skip(skip)
+      .limit(limit);
 
-    res.status(200).json({ products });
+    res.status(200).json({
+      products,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalProducts,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+        limit
+      }
+    });
   } catch (err) {
     console.error("Error fetching products:", err);
     res.status(500).json({ error: "Server error" });
@@ -280,17 +377,38 @@ const getProductsModel = async (req, res) => {
 const getproductByname = async (req, res) => {
   try {
     const { name } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+
     if (!name) {
       return res.status(400).json({ message: "Product name is required" });
     }
 
-    const products = await Products.find({
+    const filter = {
       name: { $regex: name, $options: "i" }
-    })
-      .populate("subcategoryId", "subcategoryName")
-      .populate("categoryId", "categoryName");
+    };
 
-    res.status(200).json({ products });
+    const skip = (page - 1) * limit;
+    const totalProducts = await Products.countDocuments(filter);
+    const totalPages = Math.ceil(totalProducts / limit);
+
+    const products = await Products.find(filter)
+      .populate("subcategoryId", "subcategoryName")
+      .populate("categoryId", "categoryName")
+      .skip(skip)
+      .limit(limit);
+
+    res.status(200).json({
+      products,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalProducts,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+        limit
+      }
+    });
   } catch (err) {
     console.error("Error fetching products:", err);
     res.status(500).json({ message: "Server error" });
@@ -300,17 +418,36 @@ const getproductByname = async (req, res) => {
 const getProductBycategory = async (req, res) => {
   try {
     const { categoryId } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+
     if (!categoryId) {
       return res.status(400).json({ message: "Category id is required" });
     }
 
-    const products = await Products.find({
-      categoryId: categoryId
-    })
-      .populate("subcategoryId", "subcategoryName")
-      .populate("categoryId", "categoryName");
+    const filter = { categoryId: categoryId };
 
-    res.status(200).json({ products });
+    const skip = (page - 1) * limit;
+    const totalProducts = await Products.countDocuments(filter);
+    const totalPages = Math.ceil(totalProducts / limit);
+
+    const products = await Products.find(filter)
+      .populate("subcategoryId", "subcategoryName")
+      .populate("categoryId", "categoryName")
+      .skip(skip)
+      .limit(limit);
+
+    res.status(200).json({
+      products,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalProducts,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+        limit
+      }
+    });
   } catch (err) {
     console.error("Error fetching products:", err);
     res.status(500).json({ message: "Server error" });
@@ -402,7 +539,6 @@ const countEachProductOrder = async (req, res) => {
     res.status(500).json({ message: "Failed to get product selling counts" });
   }
 };
-
 module.exports = {
   getProducts,
   addProduct,

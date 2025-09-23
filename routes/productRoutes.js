@@ -11,7 +11,7 @@ const {
   getproductByname,
  getProductByBarcode,
  getProductWithStock,
- countEachProductOrder,
+ countEachProductOrder
 } = require("../controllers/productController");
 
 productRouter.get("/products", getProducts);

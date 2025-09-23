@@ -4,67 +4,106 @@ const { Order } = require("../models/orderModel");
 const Users = require("../models/userModel")
 const bcrypt = require("bcrypt");
 
-// Environment variable or constant password for refund - change secret for production
-// bcrypt hash of 'supersecret' for example
-
 // Upsert customer: add a new order or create new customer
 const customer = async (req, res) => {
   try {
     const { name, phone, latestOrder } = req.body;
+    console.log("latest order is", latestOrder);
 
-    if (!name || !phone || !latestOrder) {
-      return res.status(400).json({ error: "Missing required fields" });
+    // ✅ Validate required fields first
+    if (!name || !phone || !latestOrder || !Array.isArray(latestOrder.items) || latestOrder.items.length === 0) {
+      return res.status(400).json({ error: "Missing or invalid fields" });
     }
 
-    // Validate latestOrder format
-    if (!Array.isArray(latestOrder.items) || latestOrder.items.length === 0) {
-      return res.status(400).json({ error: "Invalid order data" });
+    // ✅ Extract cashier info safely from first item
+    const cashierId = latestOrder.items[0]?.userId || null;
+    let cashierName = "Unknown Cashier";
+    if (cashierId) {
+      const cashier = await Users.findById(cashierId).select("username");
+      if (cashier) cashierName = cashier.username;
     }
 
+    // ✅ Compute total price if not supplied
+    const computedTotal = latestOrder.items.reduce(
+      (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
+      0
+    );
+
+    // ✅ Build purchase entry (do not rely on missing props)
+    const purchaseEntry = {
+      orderDate: latestOrder.orderDate || new Date(),
+      items: latestOrder.items,
+      cashierId,
+      cashierName,
+      paymentMethod: latestOrder.paymentMethod || "cash",
+      totalAmount: latestOrder.totalPrice || computedTotal,
+    };
+
+    // ✅ Upsert customer
     let existingCustomer = await Customer.findOne({ phone });
 
     if (existingCustomer) {
-      existingCustomer.purchaseHistory.push({
-        orderDate: latestOrder.orderDate || new Date(),
-        items: latestOrder.items,
-      });
+      existingCustomer.purchaseHistory.push(purchaseEntry);
       existingCustomer.purchaseCount += 1;
+      existingCustomer.totalSpent =
+        (existingCustomer.totalSpent || 0) + purchaseEntry.totalAmount;
+      existingCustomer.lastPurchaseDate = purchaseEntry.orderDate;
       await existingCustomer.save();
       return res.json(existingCustomer);
-    } else {
-      const newCustomer = await Customer.create({
-        name,
-        phone,
-        purchaseHistory: [
-          {
-            orderDate: latestOrder.orderDate || new Date(),
-            items: latestOrder.items,
-          },
-        ],
-        purchaseCount: 1,
-      });
-      return res.json(newCustomer);
     }
+
+    const newCustomer = await Customer.create({
+      name,
+      phone,
+      purchaseHistory: [purchaseEntry],
+      purchaseCount: 1,
+      totalSpent: purchaseEntry.totalAmount,
+      lastPurchaseDate: purchaseEntry.orderDate,
+      refundHistory: [],
+    });
+
+    return res.json(newCustomer);
   } catch (err) {
     console.error("🔥 Customer upsert error:", err);
     res.status(500).json({ error: "Server error while upserting customer" });
   }
 };
 
-// Get all customers with basic info
+
+// Get all customers with pagination
 const getCustomers = async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 8;
+    const skip = (page - 1) * limit;
+
+    const totalCustomers = await Customer.countDocuments();
+    const totalPages = Math.ceil(totalCustomers / limit);
+
     const customers = await Customer.find()
-      .select("name phone purchaseCount createdAt")
-      .sort({ createdAt: -1 });
-    res.status(200).json({ customers });
+      .select("name phone purchaseCount totalSpent lastPurchaseDate createdAt purchaseHistory")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    res.status(200).json({ 
+      customers,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalCustomers,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+        limit
+      }
+    });
   } catch (err) {
     console.error("Error fetching customers", err);
     res.status(500).json({ error: "Failed to fetch customers" });
   }
 };
 
-// Get single customer with full purchaseHistory
+// Get single customer with full purchaseHistory and refundHistory
 const getCustomerById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -72,6 +111,23 @@ const getCustomerById = async (req, res) => {
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
+    
+    // Ensure refundHistory exists (for backward compatibility)
+    if (!customer.refundHistory) {
+      customer.refundHistory = [];
+    }
+
+    // Ensure all purchase history items have required fields
+    if (customer.purchaseHistory) {
+      customer.purchaseHistory = customer.purchaseHistory.map(order => ({
+        ...order.toObject(),
+        cashierId: order.cashierId || null,
+        cashierName: order.cashierName || "Unknown Cashier",
+        paymentMethod: order.paymentMethod || "cash",
+        totalAmount: order.totalAmount || order.items?.reduce((sum, item) => sum + (item.price * item.quantity), 0) || 0
+      }));
+    }
+    
     res.json(customer);
   } catch (err) {
     console.error("Error fetching customer details", err);
@@ -79,14 +135,17 @@ const getCustomerById = async (req, res) => {
   }
 };
 
-// Refund controller
-// Body: { customerId, orderDate, refundItems: [{ productId, quantity }], password }
+// Enhanced refund controller with proper tracking
 const refund = async (req, res) => {
   try {
-    const {userId, customerId, orderDate, refundItems, password } = req.body;
+    const { userId, customerId, orderDate, refundItems, password, reason = "Customer request" } = req.body;
+    
     const userdata = await Users.findById(userId);
-    const hashedpwd = userdata.refundPassword;
+    if (!userdata) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
+    const hashedpwd = userdata.refundPassword;
 
     if (
       !customerId ||
@@ -98,7 +157,6 @@ const refund = async (req, res) => {
     ) {
       return res.status(400).json({ error: "Missing or invalid refund data" });
     }
-
 
     if (!hashedpwd) {
       return res.status(500).json({ error: "Refund password not configured" });
@@ -128,11 +186,15 @@ const refund = async (req, res) => {
     }
     const custOrder = customer.purchaseHistory[custOrderIndex];
 
-    // 
+    // Find corresponding Order document
     const order = await Order.findOne({
       userPhone: customer.phone,
-      // small buffer
+      date: {
+        $gte: new Date(targetOrderDate - 60000), // 1 minute buffer
+        $lte: new Date(targetOrderDate + 60000)
+      }
     });
+
     if (!order) {
       return res.status(404).json({ error: "Order document not found" });
     }
@@ -141,7 +203,10 @@ const refund = async (req, res) => {
     const custOrderItemsMap = new Map(custOrder.items.map((item) => [item.productId.toString(), item]));
     const orderItemsMap = new Map(order.items.map((item) => [item.productId.toString(), item]));
 
-    // Validate refund items
+    // Validate refund items and calculate totals
+    let totalRefundAmount = 0;
+    const validatedRefundItems = [];
+
     for (const refundItem of refundItems) {
       const { productId, quantity } = refundItem;
 
@@ -157,10 +222,35 @@ const refund = async (req, res) => {
       }
       if (quantity > custOrderItem.quantity || quantity > orderItem.quantity) {
         return res.status(400).json({
-          error: `Refund quantity exceeds purchased quantity for product ${productId}`,
+          error: `Refund quantity exceeds available quantity for product ${productId}`,
         });
       }
+
+      const refundItemTotal = custOrderItem.price * quantity;
+      totalRefundAmount += refundItemTotal;
+
+      validatedRefundItems.push({
+        productId,
+        name: custOrderItem.name,
+        originalQuantity: custOrderItem.originalQuantity || custOrderItem.quantity,
+        refundedQuantity: quantity,
+        unitPrice: custOrderItem.price,
+        totalRefundAmount: refundItemTotal
+      });
     }
+
+    // Create refund history entry
+    const refundEntry = {
+      refundDate: new Date(),
+      refundedBy: userId,
+      refundedByName: userdata.name || userdata.username || "Admin",
+      orderDate: custOrder.orderDate,
+      cashierName: custOrder.cashierName || "Unknown Cashier",
+      items: validatedRefundItems,
+      totalRefundAmount,
+      reason,
+      originalOrderTotal: custOrder.totalAmount || custOrder.items.reduce((total, item) => total + item.price * item.quantity, 0)
+    };
 
     // Process refund on both Customer embedded order and Order document
     for (const refundItem of refundItems) {
@@ -168,6 +258,9 @@ const refund = async (req, res) => {
 
       // Update customer purchaseHistory items
       const custOrderItem = custOrderItemsMap.get(productId);
+      if (!custOrderItem.originalQuantity) {
+        custOrderItem.originalQuantity = custOrderItem.quantity;
+      }
       custOrderItem.quantity -= quantity;
 
       if (custOrderItem.quantity === 0) {
@@ -176,6 +269,9 @@ const refund = async (req, res) => {
 
       // Update Order document items
       const orderItem = orderItemsMap.get(productId);
+      if (!orderItem.originalQuantity) {
+        orderItem.originalQuantity = orderItem.quantity + quantity;
+      }
       orderItem.quantity -= quantity;
 
       if (orderItem.quantity === 0) {
@@ -191,6 +287,18 @@ const refund = async (req, res) => {
       await product.save();
     }
 
+    // Update totals and status
+    custOrder.totalAmount = (custOrder.totalAmount || 0) - totalRefundAmount;
+    customer.totalSpent = (customer.totalSpent || 0) - totalRefundAmount;
+
+    // Initialize refundHistory if it doesn't exist (backward compatibility)
+    if (!customer.refundHistory) {
+      customer.refundHistory = [];
+    }
+    
+    // Add refund history to customer
+    customer.refundHistory.push(refundEntry);
+
     // Remove empty order from Customer purchaseHistory
     if (custOrder.items.length === 0) {
       customer.purchaseHistory.splice(custOrderIndex, 1);
@@ -199,41 +307,90 @@ const refund = async (req, res) => {
       customer.purchaseHistory[custOrderIndex] = custOrder;
     }
 
-    // Mark purchaseHistory modified for mongoose tracking
+    // Mark fields as modified for mongoose tracking
     customer.markModified("purchaseHistory");
+    customer.markModified("refundHistory");
 
-    // Save Customer document
-    await customer.save();
-
-    // Optionally, recalculate totalPrice on Order document if you want
-    // Example:
+    // Update Order document
+    if (!order.originalTotalPrice) {
+      order.originalTotalPrice = order.totalPrice;
+    }
+    
     order.totalPrice = order.items.reduce((sum, item) => {
-  const price = Number(item.sellingPrice);
-  const qty = Number(item.quantity);
+      const price = Number(item.sellingPrice);
+      const qty = Number(item.quantity);
 
-  if (isNaN(price) || isNaN(qty)) {
-    console.warn(`Invalid price or quantity detected for product ${item.productId}: price=${item.price}, qty=${item.quantity}`);
-    return sum; // skip invalid item
-  }
+      if (isNaN(price) || isNaN(qty)) {
+        console.warn(`Invalid price or quantity detected for product ${item.productId}: price=${item.sellingPrice}, qty=${item.quantity}`);
+        return sum;
+      }
 
-  return sum + price * qty;
-}, 0);
+      return sum + price * qty;
+    }, 0);
 
+    order.totalRefunded = (order.totalRefunded || 0) + totalRefundAmount;
+    
+    // Update order status
+    if (order.totalPrice === 0) {
+      order.status = "fully_refunded";
+    } else if (order.totalRefunded > 0) {
+      order.status = "partially_refunded";
+    }
 
-    // Save Order document
+    // Add refund history to order
+    if (!order.refundHistory) {
+      order.refundHistory = [];
+    }
+    order.refundHistory.push(refundEntry);
+
+    // Save both documents
+    await customer.save();
     await order.save();
 
-    return res.json({ message: "Refund processed successfully", customer, order });
+    return res.json({ 
+      message: "Refund processed successfully", 
+      customer, 
+      order,
+      refundDetails: {
+        totalRefunded: totalRefundAmount,
+        refundedItems: validatedRefundItems.length,
+        refundDate: refundEntry.refundDate,
+        processedBy: refundEntry.refundedByName
+      }
+    });
   } catch (err) {
     console.error("🔥 Refund processing error:", err);
     return res.status(500).json({ error: "Server error while processing refund" });
   }
 };
 
+// Get refund history for a customer
+const getRefundHistory = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const customer = await Customer.findById(customerId).select('refundHistory name phone');
+    
+    if (!customer) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    res.json({
+      customerInfo: {
+        name: customer.name,
+        phone: customer.phone
+      },
+      refundHistory: customer.refundHistory || []
+    });
+  } catch (err) {
+    console.error("Error fetching refund history", err);
+    res.status(500).json({ error: "Failed to fetch refund history" });
+  }
+};
 
 module.exports = {
   customer,
   getCustomers,
   getCustomerById,
   refund,
+  getRefundHistory,
 };

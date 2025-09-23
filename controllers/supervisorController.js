@@ -1025,7 +1025,7 @@ const getDetailedCashierReports = async (req, res) => {
       }
     };
 
-    // Aggregate cashier data with detailed session information
+    // Aggregate cashier data using existing data in CashierDailySession
     const cashierReports = await CashierDailySession.aggregate([
       {
         $match: matchCriteria
@@ -1040,39 +1040,6 @@ const getDetailedCashierReports = async (req, res) => {
       },
       {
         $unwind: '$cashierInfo'
-      },
-      {
-        $lookup: {
-          from: 'orders', // Use 'orders' collection, not 'sales'
-          let: { 
-            cashierId: '$cashierId',
-            sessionDate: '$sessionDate'
-          },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ['$cashierId', '$$cashierId'] },
-                    { 
-                      $gte: [
-                        '$date', 
-                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T00:00:00.000Z'] } } }
-                      ] 
-                    },
-                    { 
-                      $lt: [
-                        '$date', 
-                        { $dateFromString: { dateString: { $concat: ['$$sessionDate', 'T23:59:59.999Z'] } } }
-                      ] 
-                    }
-                  ]
-                }
-              }
-            }
-          ],
-          as: 'dayOrders'
-        }
       },
       {
         $group: {
@@ -1092,20 +1059,17 @@ const getDetailedCashierReports = async (req, res) => {
                   input: { $ifNull: ['$sessions', []] },
                   as: 'session',
                   in: {
-                    $divide: [
+                    $cond: [
+                      { $ne: ['$$session.checkOutTime', null] },
+                      '$$session.sessionDuration', // Use stored sessionDuration
                       {
-                        $subtract: [
-                          { 
-                            $cond: [
-                              { $ne: ['$$session.checkOutTime', null] },
-                              '$$session.checkOutTime',
-                              new Date()
-                            ]
+                        $divide: [
+                          {
+                            $subtract: [new Date(), '$$session.checkInTime']
                           },
-                          '$$session.checkInTime'
+                          60000 // Convert to minutes for active sessions
                         ]
-                      },
-                      60000 // Convert to minutes
+                      }
                     ]
                   }
                 }
@@ -1113,38 +1077,17 @@ const getDetailedCashierReports = async (req, res) => {
             }
           },
           
-          // Sales metrics from orders
-          totalSales: {
-            $sum: {
-              $sum: {
-                $map: {
-                  input: '$dayOrders',
-                  as: 'order',
-                  in: { $ifNull: ['$$order.totalPrice', 0] }
-                }
-              }
-            }
-          },
-          
-          totalTransactions: {
-            $sum: { $size: '$dayOrders' }
-          },
+          // Use stored sales and transaction data from the model
+          totalSales: { $sum: '$totalDailySales' },
+          totalTransactions: { $sum: '$totalDailyTransactions' },
           
           // Collect session details
           sessionDetails: {
             $push: {
               sessionDate: '$sessionDate',
               sessions: '$sessions',
-              dailySales: {
-                $sum: {
-                  $map: {
-                    input: '$dayOrders',
-                    as: 'order',
-                    in: { $ifNull: ['$$order.totalPrice', 0] }
-                  }
-                }
-              },
-              dailyTransactions: { $size: '$dayOrders' },
+              dailySales: '$totalDailySales', // Use stored value
+              dailyTransactions: '$totalDailyTransactions', // Use stored value
               totalCheckIns: '$totalCheckIns',
               totalCheckOuts: '$totalCheckOuts',
               checkoutReasonsSummary: '$checkoutReasonsSummary'
@@ -1228,9 +1171,7 @@ const getDetailedCashierReports = async (req, res) => {
               isActive: session.isActive,
               checkoutReason: session.checkoutReason,
               checkoutReasonDetails: session.checkoutReasonDetails,
-              duration: session.checkOutTime 
-                ? Math.round((new Date(session.checkOutTime) - new Date(session.checkInTime)) / 60000)
-                : Math.round((new Date() - new Date(session.checkInTime)) / 60000),
+              duration: session.sessionDuration || 0, // Use stored duration
               salesDuringSession: session.salesDuringSession || 0,
               transactionsDuringSession: session.transactionsDuringSession || 0
             });

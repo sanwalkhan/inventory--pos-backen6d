@@ -8,11 +8,13 @@ const getStartOfDay = (date, offsetDays = 0) => {
   d.setDate(d.getDate() - offsetDays);
   return d;
 };
+
 const getEndOfDay = (date) => {
   const d = new Date(date);
   d.setHours(23, 59, 59, 999);
   return d;
 };
+
 const getStartOfWeek = (date) => {
   const d = new Date(date);
   const day = d.getDay();
@@ -21,12 +23,14 @@ const getStartOfWeek = (date) => {
   d.setHours(0, 0, 0, 0);
   return d;
 };
+
 const getStartOfMonth = (date) => {
   const d = new Date(date);
   d.setDate(1);
   d.setHours(0, 0, 0, 0);
   return d;
 };
+
 const getStartOfYear = (date) => {
   const d = new Date(date);
   d.setMonth(0, 1);
@@ -218,7 +222,7 @@ const getSalesSummary = async (req, res) => {
 
 const getTopProductsByPeriod = async (req, res) => {
   try {
-    const period = req.query.period;
+    const { period, page = 1, limit = 10, sortBy = "sales" } = req.query;
     if (!period || !["daily", "weekly", "monthly", "yearly"].includes(period)) {
       return res.status(400).json({ message: "Invalid or missing period" });
     }
@@ -248,7 +252,14 @@ const getTopProductsByPeriod = async (req, res) => {
         toDate = getEndOfDay(now);
     }
 
-    const topProducts = await Order.aggregate([
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const sortField = sortBy === "revenue" ? "revenue" : "sales";
+    const sortOrder = sortBy === "low" ? 1 : -1;
+
+    const topProductsAgg = await Order.aggregate([
       { $match: { date: { $gte: fromDate, $lte: toDate } } },
       { $unwind: "$items" },
       {
@@ -259,9 +270,24 @@ const getTopProductsByPeriod = async (req, res) => {
           revenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
         }
       },
-      { $sort: { sales: -1 } },
-      { $limit: 20 }
+      { $sort: { [sortField]: sortOrder } },
+      {
+        $facet: {
+          products: [{ $skip: skip }, { $limit: limitNum }],
+          totalCount: [{ $count: "count" }]
+        }
+      }
     ]);
+
+    const products = topProductsAgg[0].products.map(p => ({
+      name: p._id,
+      price: p.price,
+      sales: p.sales,
+      revenue: p.revenue,
+    }));
+
+    const totalCount = topProductsAgg[0].totalCount[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / limitNum);
 
     res.json({
       period,
@@ -269,12 +295,14 @@ const getTopProductsByPeriod = async (req, res) => {
         from: fromDate.toISOString(),
         to: toDate.toISOString(),
       },
-      products: topProducts.map(p => ({
-        name: p._id,
-        price: p.price,
-        sales: p.sales,
-        revenue: p.revenue,
-      })),
+      products,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalCount,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      }
     });
   } catch (error) {
     console.error("Error fetching top products:", error);
@@ -346,12 +374,22 @@ const getSalesByDateRange = async (req, res) => {
   }
 };
 
-// New: Product sales overview for all products, with unsold/low-selling/best-selling in period
 const getProductSalesOverview = async (req, res) => {
   try {
-    const { period, startDate, endDate, lowThreshold = 5 } = req.query;
+    const { 
+      period = "monthly", 
+      startDate, 
+      endDate, 
+      lowThreshold = 5,
+      page = 1,
+      limit = 20,
+      search = "",
+      category = "all"
+    } = req.query;
+
     const now = new Date();
     let fromDate, toDate;
+
     switch (period) {
       case "daily":
         fromDate = getStartOfDay(now);
@@ -379,7 +417,25 @@ const getProductSalesOverview = async (req, res) => {
         toDate = getEndOfDay(now);
     }
 
-    const allProducts = await Products.find({}, { name: 1, price: 1, barcode: 1 }).lean();
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build search filter
+    const productFilter = {};
+    if (search) {
+      productFilter.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { barcode: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    const allProducts = await Products.find(productFilter, { 
+      name: 1, 
+      price: 1, 
+      barcode: 1,
+      sellingPrice: 1
+    }).lean();
 
     const salesAgg = await Order.aggregate([
       { $match: { date: { $gte: fromDate, $lte: toDate } } },
@@ -388,21 +444,41 @@ const getProductSalesOverview = async (req, res) => {
         $group: {
           _id: "$items.name",
           totalSold: { $sum: "$items.quantity" },
+          totalRevenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
         }
       }
     ]);
 
     const salesMap = {};
     salesAgg.forEach((s) => {
-      salesMap[s._id] = s.totalSold;
+      salesMap[s._id] = {
+        totalSold: s.totalSold,
+        totalRevenue: s.totalRevenue
+      };
     });
 
     const result = allProducts.map((prod) => ({
       name: prod.name,
-      price: prod.price,
+      price: prod.sellingPrice || prod.price,
       barcode: prod.barcode,
-      totalSold: salesMap[prod.name] || 0,
+      totalSold: salesMap[prod.name]?.totalSold || 0,
+      totalRevenue: salesMap[prod.name]?.totalRevenue || 0,
     }));
+
+    // Filter by category
+    let filteredProducts = result;
+    if (category === "unsold") {
+      filteredProducts = result.filter(p => p.totalSold === 0);
+    } else if (category === "low") {
+      filteredProducts = result.filter(p => p.totalSold > 0 && p.totalSold <= Number(lowThreshold));
+    } else if (category === "high") {
+      filteredProducts = result.filter(p => p.totalSold > Number(lowThreshold));
+    }
+
+    // Pagination
+    const totalCount = filteredProducts.length;
+    const paginatedProducts = filteredProducts.slice(skip, skip + limitNum);
+    const totalPages = Math.ceil(totalCount / limitNum);
 
     const unsoldProducts = result.filter((p) => p.totalSold === 0);
     const lowSellingProducts = result.filter((p) => p.totalSold > 0 && p.totalSold <= Number(lowThreshold));
@@ -411,10 +487,23 @@ const getProductSalesOverview = async (req, res) => {
     res.json({
       from: fromDate,
       to: toDate,
-      products: result,
-      unsoldProducts,
-      lowSellingProducts,
+      products: paginatedProducts,
+      unsoldProducts: unsoldProducts.slice(0, 10),
+      lowSellingProducts: lowSellingProducts.slice(0, 10),
       topProduct,
+      summary: {
+        totalProducts: result.length,
+        unsoldCount: unsoldProducts.length,
+        lowSellingCount: lowSellingProducts.length,
+        highSellingCount: result.filter(p => p.totalSold > Number(lowThreshold)).length
+      },
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalCount,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      }
     });
   } catch (error) {
     console.error("Error in getProductSalesOverview:", error);
@@ -422,7 +511,6 @@ const getProductSalesOverview = async (req, res) => {
   }
 };
 
-// New: Get best selling product on a specific date
 const getBestProductByDate = async (req, res) => {
   try {
     const { date } = req.query;
@@ -437,7 +525,7 @@ const getBestProductByDate = async (req, res) => {
         $group: {
           _id: "$items.name",
           totalSold: { $sum: "$items.quantity" },
-          price: { $first: "$items.sellingPrice" }
+          price: { $first: "$items.price" }
         }
       },
       { $sort: { totalSold: -1 } },
@@ -452,10 +540,11 @@ const getBestProductByDate = async (req, res) => {
 
 const getProductsSoldBetweenDates = async (req, res) => {
   try {
-    const { from, to } = req.query;
+    const { from, to, page = 1, limit = 20, search = "" } = req.query;
     if (!from || !to) {
       return res.status(400).json({ message: "Both 'from' and 'to' dates are required" });
     }
+    
     const fromDate = new Date(from);
     const toDate = new Date(to);
     toDate.setHours(23, 59, 59, 999);
@@ -464,10 +553,25 @@ const getProductsSoldBetweenDates = async (req, res) => {
       return res.status(400).json({ message: "'From' date cannot be after 'to' date" });
     }
 
-    // All products for reference (name, price, barcode, etc.)
-    const allProducts = await Products.find({}, { name: 1, sellingPrice: 1, barcode: 1 }).lean();
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    // Aggregate totalSold for each product in date range
+    // Build search filter
+    const productFilter = {};
+    if (search) {
+      productFilter.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { barcode: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    const allProducts = await Products.find(productFilter, { 
+      name: 1, 
+      sellingPrice: 1, 
+      barcode: 1 
+    }).lean();
+
     const salesAgg = await Order.aggregate([
       { $match: { date: { $gte: fromDate, $lte: toDate } } },
       { $unwind: "$items" },
@@ -479,13 +583,11 @@ const getProductsSoldBetweenDates = async (req, res) => {
       }
     ]);
 
-    // Map product name to totalSold for quick lookup
     const salesMap = {};
     salesAgg.forEach((s) => {
       salesMap[s._id] = s.totalSold;
     });
 
-    // Combine with all products (to include unsold products in range)
     const result = allProducts.map((prod) => ({
       name: prod.name,
       price: prod.sellingPrice,
@@ -493,20 +595,32 @@ const getProductsSoldBetweenDates = async (req, res) => {
       totalSold: salesMap[prod.name] || 0,
     }));
 
-    console.log(result);
-    // Optionally, you can also sort by totalSold here or let the frontend do it.
-    // result.sort((a, b) => b.totalSold - a.totalSold);
+    // Sort by totalSold descending
+    result.sort((a, b) => b.totalSold - a.totalSold);
+
+    // Pagination
+    const totalCount = result.length;
+    const paginatedProducts = result.slice(skip, skip + limitNum);
+    const totalPages = Math.ceil(totalCount / limitNum);
 
     res.json({
       from: fromDate,
       to: toDate,
-      products: result,
+      products: paginatedProducts,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalCount,
+        hasNextPage: pageNum < totalPages,
+        hasPrevPage: pageNum > 1,
+      }
     });
   } catch (error) {
     console.error("Error in getProductsSoldBetweenDates:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 module.exports = {
   getSalesSummary,
   getTopProductsByPeriod,

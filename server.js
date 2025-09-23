@@ -8,7 +8,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const {PeerServer} = require('peer');
 const Currency = require("./models/currancyModel");
-console.log(process.env);
+
 const allowedOrigins =process.env.FRONTEND_URL;
 (async () => {
   const count = await Currency.countDocuments();

@@ -1,13 +1,18 @@
 const { Order } = require("../models/orderModel");
 const { Products } = require("../models/productModel");
+const User = require("../models/userModel");
 
 const createOrder = async (req, res) => {
   try {
     console.log("Received order data:", req.body);
     const { userName, userPhone, cashierId, date, items, totalPrice, paymentMethod } = req.body;
+    const cashier = await User.findById(cashierId).select("username");
+    const cashierName = cashier.username;
+    console.log("cashierName is :", cashierName);
+  
 
     // Validate required fields
-    if (!userName || !userPhone || !cashierId || !date || !items?.length || !totalPrice || !paymentMethod) {
+    if (!userName || !userPhone || !cashierId || !cashierName || !date || !items?.length || !totalPrice || !paymentMethod) {
       return res.status(400).json({ 
         message: "Missing required order data",
         required: ["userName", "userPhone", "cashierId", "date", "items", "totalPrice", "paymentMethod"]
@@ -66,6 +71,7 @@ const createOrder = async (req, res) => {
       userName: userName.trim(),
       userPhone: userPhone.trim(),
       cashierId,
+      cashierName,
       date: new Date(date),
       items: items.map(item => ({
         productId: item.productId,
