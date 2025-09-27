@@ -4,29 +4,60 @@ const cloudinary = require("cloudinary").v2;
 
 const categoryController = async (req, res) => {
   try {
-    const { categoryName } = req.body;
-    if (!categoryName || !req.file) {
-      return res.status(400).json({ message: "Category name and image are required" });
+    const { categoryName, hsCode } = req.body;
+    
+    if (!categoryName || !hsCode || !req.file) {
+      return res.status(400).json({ 
+        message: "Category name, HS code, and image are required" 
+      });
+    }
+
+    // Validate HS code format
+    if (!/^\d{4}$/.test(hsCode)) {
+      return res.status(400).json({ 
+        message: "HS code must be exactly 4 digits" 
+      });
     }
 
     const image = req.file.path;
-    const imagePublicId = req.file.filename; // multer-storage-cloudinary sets public_id here
+    const imagePublicId = req.file.filename;
 
-    const newCategory = new Category({ categoryName, image, imagePublicId });
+    const newCategory = new Category({ 
+      categoryName, 
+      hsCode,
+      image, 
+      imagePublicId 
+    });
+    
     await newCategory.save();
 
-    res.status(201).json({ message: "Category added successfully", category: newCategory });
+    res.status(201).json({ 
+      message: "Category added successfully", 
+      category: newCategory 
+    });
   } catch (error) {
     console.error("Add category error:", error);
+    
+    if (error.code === 11000) {
+      if (error.keyPattern.categoryName) {
+        return res.status(400).json({ message: "Category name already exists" });
+      }
+      if (error.keyPattern.hsCode) {
+        return res.status(400).json({ message: "HS code already exists" });
+      }
+    }
+    
     res.status(500).json({ message: "Server error" });
   }
 };
 
-
 const getAllCategories = async (req, res) => {
   try {
     const categories = await Category.find();
-    res.status(200).json({ message: "Categories retrieved successfully", categories });
+    res.status(200).json({ 
+      message: "Categories retrieved successfully", 
+      categories 
+    });
   } catch (error) {
     console.error("Error retrieving categories:", error.message);
     res.status(500).json({ message: "Server error" });
@@ -35,11 +66,20 @@ const getAllCategories = async (req, res) => {
 
 const updateCategory = async (req, res) => {
   try {
-    const { categoryName } = req.body;
+    const { categoryName, hsCode } = req.body;
     const { id } = req.params;
 
-    if (!categoryName) {
-      return res.status(400).json({ message: "Category name is required" });
+    if (!categoryName || !hsCode) {
+      return res.status(400).json({ 
+        message: "Category name and HS code are required" 
+      });
+    }
+
+    // Validate HS code format
+    if (!/^\d{4}$/.test(hsCode)) {
+      return res.status(400).json({ 
+        message: "HS code must be exactly 4 digits" 
+      });
     }
 
     const category = await Category.findById(id);
@@ -47,7 +87,7 @@ const updateCategory = async (req, res) => {
       return res.status(404).json({ message: "Category not found" });
     }
 
-    const updateData = { categoryName };
+    const updateData = { categoryName, hsCode };
 
     if (req.file) {
       // Delete old image from Cloudinary if it exists
@@ -58,24 +98,59 @@ const updateCategory = async (req, res) => {
       updateData.imagePublicId = req.file.filename;
     }
 
-    const updatedCategory = await Category.findByIdAndUpdate(id, updateData, { new: true });
+    // If HS code is changing, update all related subcategories
+    if (category.hsCode !== hsCode) {
+      const subcategories = await Subcategory.find({ category: id });
+      
+      for (const subcategory of subcategories) {
+        const [, subHsCode] = subcategory.hsCode.split('.');
+        const newSubHsCode = `${hsCode}.${subHsCode}`;
+        
+        await Subcategory.findByIdAndUpdate(subcategory._id, { 
+          hsCode: newSubHsCode 
+        });
+      }
+    }
 
-    res.status(200).json({ message: "Category updated successfully", category: updatedCategory });
+    const updatedCategory = await Category.findByIdAndUpdate(id, updateData, { 
+      new: true 
+    });
+
+    res.status(200).json({ 
+      message: "Category updated successfully", 
+      category: updatedCategory 
+    });
   } catch (error) {
     console.error("Error updating category:", error.message);
+    
+    if (error.code === 11000) {
+      if (error.keyPattern.categoryName) {
+        return res.status(400).json({ message: "Category name already exists" });
+      }
+      if (error.keyPattern.hsCode) {
+        return res.status(400).json({ message: "HS code already exists" });
+      }
+    }
+    
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 const deleteCategory = async (req, res) => {
   try {
     const categoryId = req.params.id;
 
-    // Optionally, check if subcategories exist here (you already do in frontend also)
     const category = await Category.findById(categoryId);
     if (!category) {
       return res.status(404).json({ message: "Category not found" });
+    }
+
+    // Check if subcategories exist
+    const subcategoryCount = await Subcategory.countDocuments({ category: categoryId });
+    if (subcategoryCount > 0) {
+      return res.status(400).json({ 
+        message: "Cannot delete category with existing subcategories" 
+      });
     }
 
     // Delete image from Cloudinary if exists
@@ -92,15 +167,18 @@ const deleteCategory = async (req, res) => {
   }
 };
 
-
 const getSubcategoriesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const subcategories = await Subcategory.find({ category: categoryId }).populate("category");
+    const subcategories = await Subcategory.find({ category: categoryId })
+      .populate("category");
     res.status(200).json({ success: true, subcategories });
   } catch (error) {
     console.error("Error fetching subcategories:", error.message);
-    res.status(500).json({ success: false, message: "Server error while retrieving subcategories" });
+    res.status(500).json({ 
+      success: false, 
+      message: "Server error while retrieving subcategories" 
+    });
   }
 };
 
