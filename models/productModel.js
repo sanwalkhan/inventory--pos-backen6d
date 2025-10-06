@@ -47,22 +47,39 @@ const ProductSchema = new mongoose.Schema(
       ref: "Subcategory",
       required: true,
     },
-    // Individual tax rates stored as percentages
-    saleTax: { 
-      type: Number, 
-      default: 0,
-      min: 0,
-      max: 100 
+    // HS Code from subcategory (8 digits: XXXX.XXXX)
+    hsCode: {
+      type: String,
+      required: true,
+      match: [/^\d{4}\.\d{4}$/, 'HS Code must be in format XXXX.XXXX (8 digits total)'],
+      trim: true
     },
-    gst: { 
+    // Tax rates from subcategory
+    salesTax: { 
       type: Number, 
-      default: 0,
+      required: true,
       min: 0,
-      max: 100 
+      max: 100,
+      default: 0
+    },
+    customDuty: { 
+      type: Number, 
+      required: true,
+      min: 0,
+      max: 100,
+      default: 0
     },
     withholdingTax: { 
       type: Number, 
-      default: 0,
+      required: true,
+      min: 0,
+      max: 100,
+      default: 0
+    },
+    // User-entered margin percentage
+    marginPercent: { 
+      type: Number, 
+      required: true,
       min: 0,
       max: 100 
     },
@@ -70,13 +87,6 @@ const ProductSchema = new mongoose.Schema(
     discount: { 
       type: Number, 
       default: 0,
-      min: 0,
-      max: 100 
-    },
-    // Margin percentage (fixed at 12%)
-    marginPercent: { 
-      type: Number, 
-      default: 12,
       min: 0,
       max: 100 
     },
@@ -92,7 +102,7 @@ const ProductSchema = new mongoose.Schema(
 
 // Virtual for calculating total tax percentage
 ProductSchema.virtual('totalTaxPercent').get(function() {
-  return (this.saleTax || 0) + (this.gst || 0) + (this.withholdingTax || 0);
+  return (this.salesTax || 0) + (this.customDuty || 0) + (this.withholdingTax || 0);
 });
 
 // Virtual for calculating savings amount

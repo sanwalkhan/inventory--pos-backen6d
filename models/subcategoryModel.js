@@ -34,6 +34,13 @@ const subcategorySchema = new mongoose.Schema(
       max: 100,
       default: 0
     },
+    withholdingTax: {
+      type: Number,
+      required: true,
+      min: 0,
+      max: 100,
+      default: 0
+    },
     exemptions: {
       spoNo: { 
         type: String, 

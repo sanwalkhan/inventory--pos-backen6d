@@ -3,6 +3,7 @@ const { Products } = require("../models/productModel");
 const { Order } = require("../models/orderModel");
 const Users = require("../models/userModel")
 const bcrypt = require("bcrypt");
+const mongoose = require("mongoose");
 
 // Upsert customer: add a new order or create new customer
 const customer = async (req, res) => {
@@ -140,7 +141,20 @@ const refund = async (req, res) => {
   try {
     const { userId, customerId, orderDate, refundItems, password, reason = "Customer request" } = req.body;
     
-    const userdata = await Users.findById(userId);
+    // FIX: Handle both ObjectId and string identifiers for users
+    let userdata;
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      userdata = await Users.findById(userId);
+    } else {
+      userdata = await Users.findOne({
+        $or: [
+          { username: userId },
+          { email: userId },
+          { adminId: userId }
+        ]
+      });
+    }
+
     if (!userdata) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -229,27 +243,41 @@ const refund = async (req, res) => {
       const refundItemTotal = custOrderItem.price * quantity;
       totalRefundAmount += refundItemTotal;
 
+      // FIX: Include all required fields for refund items
       validatedRefundItems.push({
         productId,
         name: custOrderItem.name,
         originalQuantity: custOrderItem.originalQuantity || custOrderItem.quantity,
         refundedQuantity: quantity,
         unitPrice: custOrderItem.price,
-        totalRefundAmount: refundItemTotal
+        totalRefundAmount: refundItemTotal,
+        // Include fields that might be required by your schema
+        hsCode: custOrderItem.hsCode || orderItem.hsCode || "N/A", // Get from original items
+        category: custOrderItem.category || orderItem.category || "Uncategorized",
+        barcode: custOrderItem.barcode || orderItem.barcode || "",
+        sellingPrice: custOrderItem.price, // Use same price as unitPrice for consistency
+        // Include any other fields that might be required
+        ...(custOrderItem.hsCode && { hsCode: custOrderItem.hsCode }),
+        ...(orderItem.hsCode && { hsCode: orderItem.hsCode })
       });
     }
 
-    // Create refund history entry
+    // FIX: Create complete refund history entry with all required fields
     const refundEntry = {
       refundDate: new Date(),
-      refundedBy: userId,
+      refundedBy: userdata._id ? userdata._id.toString() : userId, // Use proper ID
       refundedByName: userdata.name || userdata.username || "Admin",
       orderDate: custOrder.orderDate,
       cashierName: custOrder.cashierName || "Unknown Cashier",
       items: validatedRefundItems,
       totalRefundAmount,
       reason,
-      originalOrderTotal: custOrder.totalAmount || custOrder.items.reduce((total, item) => total + item.price * item.quantity, 0)
+      originalOrderTotal: custOrder.totalAmount || custOrder.items.reduce((total, item) => total + item.price * item.quantity, 0),
+      // Include additional fields that might be required
+      orderId: order._id,
+      customerId: customer._id,
+      customerName: customer.name,
+      customerPhone: customer.phone
     };
 
     // Process refund on both Customer embedded order and Order document
@@ -341,16 +369,31 @@ const refund = async (req, res) => {
     if (!order.refundHistory) {
       order.refundHistory = [];
     }
-    order.refundHistory.push(refundEntry);
+    
+    // FIX: Ensure order refund entry has all required fields
+    const orderRefundEntry = {
+      ...refundEntry,
+      // Ensure items have all required schema fields
+      items: validatedRefundItems.map(item => ({
+        ...item,
+        // Make sure hsCode is always provided
+        hsCode: item.hsCode || "N/A"
+      }))
+    };
+    
+    order.refundHistory.push(orderRefundEntry);
 
-    // Save both documents
-    await customer.save();
-    await order.save();
+    // Save both documents with error handling
+    try {
+      await customer.save();
+      await order.save();
+    } catch (saveError) {
+      console.error("Save error details:", saveError.errors);
+      throw saveError;
+    }
 
     return res.json({ 
       message: "Refund processed successfully", 
-      customer, 
-      order,
       refundDetails: {
         totalRefunded: totalRefundAmount,
         refundedItems: validatedRefundItems.length,
@@ -360,6 +403,19 @@ const refund = async (req, res) => {
     });
   } catch (err) {
     console.error("🔥 Refund processing error:", err);
+    
+    // More detailed error logging
+    if (err.name === 'ValidationError') {
+      console.error("Validation errors:", err.errors);
+      return res.status(400).json({ 
+        error: "Validation failed", 
+        details: Object.keys(err.errors).map(key => ({
+          field: key,
+          message: err.errors[key].message
+        }))
+      });
+    }
+    
     return res.status(500).json({ error: "Server error while processing refund" });
   }
 };

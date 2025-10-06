@@ -1,33 +1,34 @@
 const { Products } = require("../models/productModel");
+const { Subcategory } = require("../models/subcategoryModel");
 const cloudinary = require("cloudinary").v2;
 const { Order } = require('../models/orderModel');
 
-// Helper: Calculate selling prices with discount
+// Helper: Calculate selling prices with taxes and margin
 function calculateSellingPrices({
   price,
-  saleTax = 0,
+  salesTax = 0,
+  customDuty = 0,
   withholdingTax = 0,
-  gst = 0,
-  margin = 12,
+  margin = 0,
   discount = 0,
 }) {
   // Convert inputs to floats
   price = parseFloat(price);
-  saleTax = parseFloat(saleTax);
+  salesTax = parseFloat(salesTax);
+  customDuty = parseFloat(customDuty);
   withholdingTax = parseFloat(withholdingTax);
-  gst = parseFloat(gst);
   margin = parseFloat(margin);
   discount = parseFloat(discount);
 
   // Calculate tax amounts
-  const saleTaxAmount = (price * saleTax) / 100;
+  const salesTaxAmount = (price * salesTax) / 100;
+  const customDutyAmount = (price * customDuty) / 100;
   const withholdingTaxAmount = (price * withholdingTax) / 100;
-  const gstAmount = (price * gst) / 100;
   const marginAmount = (price * margin) / 100;
 
   // Selling price without discount (cost + taxes + margin)
-  const sellingPriceWithoutDiscount = price + saleTaxAmount + gstAmount + withholdingTaxAmount + marginAmount;
-  
+  const sellingPriceWithoutDiscount = price + salesTaxAmount + customDutyAmount + withholdingTaxAmount + marginAmount;
+
   // Apply discount to get final selling price
   const discountAmount = (sellingPriceWithoutDiscount * discount) / 100;
   const sellingPrice = sellingPriceWithoutDiscount - discountAmount;
@@ -42,7 +43,7 @@ function calculateSellingPrices({
 const getProducts = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 8;
+    const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
     const categoryId = req.query.categoryId || '';
     const subcategoryId = req.query.subcategoryId || '';
@@ -51,18 +52,18 @@ const getProducts = async (req, res) => {
 
     // Build filter object
     const filter = {};
-    
+
     if (search) {
       filter.$or = [
         { name: { $regex: search, $options: 'i' } },
         { barcode: { $regex: search, $options: 'i' } }
       ];
     }
-    
+
     if (categoryId) {
       filter.categoryId = categoryId;
     }
-    
+
     if (subcategoryId) {
       filter.subcategoryId = subcategoryId;
     }
@@ -120,14 +121,18 @@ const addProduct = async (req, res) => {
       categoryId,
       subcategoryId,
       description,
-      saleTax = 0,
-      withholdingTax = 0,
-      gst = 0,
+      marginPercent = 0,
       discount = 0,
     } = req.body;
 
     if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId || !req.file) {
       return res.status(400).json({ message: "All fields including image are required" });
+    }
+
+    // Get subcategory to fetch tax rates and HS code
+    const subcategory = await Subcategory.findById(subcategoryId).populate('category');
+    if (!subcategory) {
+      return res.status(400).json({ message: "Invalid subcategory" });
     }
 
     const normalizedBarcode = barcode.trim().toLowerCase();
@@ -147,13 +152,13 @@ const addProduct = async (req, res) => {
       return res.status(409).json({ message: "Product with this name already exists." });
     }
 
-    // Calculate selling prices
+    // Calculate selling prices using subcategory tax rates
     const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
       price,
-      saleTax,
-      withholdingTax,
-      gst,
-      margin: 12, // fixed margin %
+      salesTax: subcategory.salesTax,
+      customDuty: subcategory.customDuty,
+      withholdingTax: subcategory.withholdingTax,
+      margin: marginPercent,
       discount,
     });
 
@@ -165,11 +170,12 @@ const addProduct = async (req, res) => {
       categoryId,
       subcategoryId,
       description,
-      saleTax: parseFloat(saleTax),
-      withholdingTax: parseFloat(withholdingTax),
-      gst: parseFloat(gst),
+      hsCode: subcategory.hsCode, // Store 8-digit HS code from subcategory
+      salesTax: subcategory.salesTax,
+      customDuty: subcategory.customDuty,
+      withholdingTax: subcategory.withholdingTax,
+      marginPercent: parseFloat(marginPercent),
       discount: parseFloat(discount),
-      marginPercent: 12,
       sellingPriceWithoutDiscount,
       sellingPrice,
       image: req.file.path,
@@ -196,9 +202,7 @@ const updateProduct = async (req, res) => {
       categoryId,
       subcategoryId,
       description,
-      saleTax = 0,
-      withholdingTax = 0,
-      gst = 0,
+      marginPercent,
       discount = 0,
     } = req.body;
 
@@ -209,6 +213,12 @@ const updateProduct = async (req, res) => {
     const product = await Products.findById(id);
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Get subcategory to fetch tax rates and HS code
+    const subcategory = await Subcategory.findById(subcategoryId).populate('category');
+    if (!subcategory) {
+      return res.status(400).json({ message: "Invalid subcategory" });
     }
 
     const normalizedBarcode = barcode.trim().toLowerCase();
@@ -232,13 +242,13 @@ const updateProduct = async (req, res) => {
       return res.status(409).json({ message: "Another product with this name already exists." });
     }
 
-    // Calculate selling prices
+    // Calculate selling prices using subcategory tax rates
     const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
       price,
-      saleTax,
-      withholdingTax,
-      gst,
-      margin: 12,
+      salesTax: subcategory.salesTax,
+      customDuty: subcategory.customDuty,
+      withholdingTax: subcategory.withholdingTax,
+      margin: marginPercent || product.marginPercent,
       discount,
     });
 
@@ -250,11 +260,12 @@ const updateProduct = async (req, res) => {
       categoryId,
       subcategoryId,
       description,
-      saleTax: parseFloat(saleTax),
-      withholdingTax: parseFloat(withholdingTax),
-      gst: parseFloat(gst),
+      hsCode: subcategory.hsCode, // Update HS code from subcategory
+      salesTax: subcategory.salesTax,
+      customDuty: subcategory.customDuty,
+      withholdingTax: subcategory.withholdingTax,
+      marginPercent: parseFloat(marginPercent || product.marginPercent),
       discount: parseFloat(discount),
-      marginPercent: 12,
       sellingPriceWithoutDiscount,
       sellingPrice,
     };
@@ -374,19 +385,26 @@ const getProductsModel = async (req, res) => {
   }
 };
 
+// Search products by name, barcode, or HS code
 const getproductByname = async (req, res) => {
   try {
-    const { name } = req.query;
+    const { name, hsCode } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 8;
 
-    if (!name) {
-      return res.status(400).json({ message: "Product name is required" });
+    const filter = {};
+
+    if (name) {
+      filter.name = { $regex: name, $options: "i" };
     }
 
-    const filter = {
-      name: { $regex: name, $options: "i" }
-    };
+    if (hsCode) {
+      filter.hsCode = { $regex: hsCode, $options: "i" };
+    }
+
+    if (!name && !hsCode) {
+      return res.status(400).json({ message: "Product name or HS code is required" });
+    }
 
     const skip = (page - 1) * limit;
     const totalProducts = await Products.countDocuments(filter);
@@ -462,7 +480,7 @@ const getProductByBarcode = async (req, res) => {
     }
 
     const normalizedBarcode = barcode.trim().toLowerCase();
-    const product = await Products.find({ 
+    const product = await Products.find({
       barcode: { $regex: `^${normalizedBarcode}$`, $options: "i" }
     })
     .populate("subcategoryId", "subcategoryName")
@@ -524,10 +542,12 @@ const countEachProductOrder = async (req, res) => {
       description: product.description,
       categoryId: product.categoryId,
       subcategoryId: product.subcategoryId,
+      hsCode: product.hsCode,
       image: product.image,
-      saleTax: product.saleTax,
-      gst: product.gst,
+      salesTax: product.salesTax,
+      customDuty: product.customDuty,
       withholdingTax: product.withholdingTax,
+      marginPercent: product.marginPercent,
       discount: product.discount,
       sellingPriceWithoutDiscount: product.sellingPriceWithoutDiscount,
       sellingPrice: product.sellingPrice,
@@ -539,6 +559,7 @@ const countEachProductOrder = async (req, res) => {
     res.status(500).json({ message: "Failed to get product selling counts" });
   }
 };
+
 module.exports = {
   getProducts,
   addProduct,

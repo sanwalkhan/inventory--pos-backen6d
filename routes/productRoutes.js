@@ -9,25 +9,22 @@ const {
   getProductsBySubCategory,
   getProductsModel,
   getproductByname,
- getProductByBarcode,
- getProductWithStock,
- countEachProductOrder
+  getProductBycategory,
+  getProductByBarcode,
+  getProductWithStock,
+  countEachProductOrder,
 } = require("../controllers/productController");
 
 productRouter.get("/products", getProducts);
-productRouter.get("/productswithstock",getProductWithStock);
-productRouter.post("/products", upload.single("image"), addProduct);  // POST with image upload
-
+productRouter.get("/productswithstock", getProductWithStock);
+productRouter.post("/products", upload.single("image"), addProduct);
 productRouter.delete("/products/:id", deleteProduct);
 productRouter.get("/products/search", getproductByname);
 productRouter.get("/products/barcode", getProductByBarcode);
-productRouter.put("/products/:id", upload.single("image"), updateProduct);  // PUT with optional image upload
-productRouter.get(
-  "/productsSubcategories",
-  getProductsBySubCategory
-);
+productRouter.put("/products/:id", upload.single("image"), updateProduct);
+productRouter.get("/productsSubcategories", getProductsBySubCategory);
 productRouter.get("/products/subcategory/:subcategoryId", getProductsModel);
-productRouter.get("/products/productsCategories", getProductsModel);
+productRouter.get("/products/productsCategories", getProductBycategory);
 productRouter.get("/counteachproductorder", countEachProductOrder);
 
 module.exports = productRouter;

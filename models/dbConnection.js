@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 require("dotenv").config({ path: "../.env" });
 const dbUri = process.env.MONGO_URI;
-console.log("database Uri:", dbUri);
+
 mongoose
   .connect(dbUri, {
     useNewUrlParser: true,

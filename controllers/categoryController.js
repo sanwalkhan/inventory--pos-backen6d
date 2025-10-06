@@ -12,7 +12,7 @@ const categoryController = async (req, res) => {
       });
     }
 
-    // Validate HS code format
+    // Validate HS code format (4 digits)
     if (!/^\d{4}$/.test(hsCode)) {
       return res.status(400).json({ 
         message: "HS code must be exactly 4 digits" 
@@ -75,7 +75,7 @@ const updateCategory = async (req, res) => {
       });
     }
 
-    // Validate HS code format
+    // Validate HS code format (4 digits)
     if (!/^\d{4}$/.test(hsCode)) {
       return res.status(400).json({ 
         message: "HS code must be exactly 4 digits" 
@@ -103,8 +103,9 @@ const updateCategory = async (req, res) => {
       const subcategories = await Subcategory.find({ category: id });
       
       for (const subcategory of subcategories) {
-        const [, subHsCode] = subcategory.hsCode.split('.');
-        const newSubHsCode = `${hsCode}.${subHsCode}`;
+        // Extract the subcategory part (last 4 digits after the dot)
+        const subcategoryCode = subcategory.hsCode.split('.')[1];
+        const newSubHsCode = `${hsCode}.${subcategoryCode}`;
         
         await Subcategory.findByIdAndUpdate(subcategory._id, { 
           hsCode: newSubHsCode 
