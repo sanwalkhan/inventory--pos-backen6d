@@ -270,6 +270,12 @@ const updateProduct = async (req, res) => {
       salesTax: subcategory.salesTax,
       customDuty: subcategory.customDuty,
       withholdingTax: subcategory.withholdingTax,
+        exemptions: {
+    spoNo: subcategory.exemptions?.spoNo || '',
+    scheduleNo: subcategory.exemptions?.scheduleNo || '',
+    itemNo: subcategory.exemptions?.itemNo || ''
+  },
+  unitOfMeasurement: subcategory.unitOfMeasurement || 'piece',
       marginPercent: parseFloat(marginPercent || product.marginPercent),
       discount: parseFloat(discount),
       sellingPriceWithoutDiscount,
