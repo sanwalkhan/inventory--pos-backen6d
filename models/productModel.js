@@ -1,3 +1,7 @@
+const mongoose = require("mongoose");
+const { Category } = require("./categoryModel");
+const { Subcategory } = require("./subcategoryModel");
+
 const ProductSchema = new mongoose.Schema(
   {
     name: { 
@@ -125,3 +129,21 @@ const ProductSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Virtual for calculating total tax percentage
+ProductSchema.virtual('totalTaxPercent').get(function() {
+  return (this.salesTax || 0) + (this.customDuty || 0) + (this.withholdingTax || 0);
+});
+
+// Virtual for calculating savings amount
+ProductSchema.virtual('savingsAmount').get(function() {
+  return this.sellingPriceWithoutDiscount - this.sellingPrice;
+});
+
+// Include virtuals when converting to JSON
+ProductSchema.set('toJSON', { virtuals: true });
+ProductSchema.set('toObject', { virtuals: true });
+
+const Products = mongoose.model("Products", ProductSchema);
+
+module.exports = { Products };

@@ -559,6 +559,8 @@ const countEachProductOrder = async (req, res) => {
       salesTax: product.salesTax,
       customDuty: product.customDuty,
       withholdingTax: product.withholdingTax,
+        exemptions: product.exemptions,
+       unitOfMeasurement: product.unitOfMeasurement,
       marginPercent: product.marginPercent,
       discount: product.discount,
       sellingPriceWithoutDiscount: product.sellingPriceWithoutDiscount,

@@ -10,6 +10,7 @@ const {PeerServer} = require('peer');
 const Currency = require("./models/currancyModel");
 
 const allowedOrigins =process.env.FRONTEND_URL;
+
 (async () => {
   const count = await Currency.countDocuments();
   if (count === 0) {
@@ -25,7 +26,6 @@ const peerServer = PeerServer({
   debug: true,
   corsOptions: {
     origin:  allowedOrigins,
-
     credentials: true
   }
 });
@@ -60,8 +60,12 @@ const NotificationRouter = require("./routes/notificationRoutes");
 
 
 
+
 const app = express();
 const port = process.env.PORT;
+
+ 
+
 
 // --- WebSocket Setup ---
 const server = http.createServer(app);
@@ -121,7 +125,6 @@ app.use(bodyParser.json());
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  credentials: true
 }));
 
 // Routes - Make sure NotificationRouter is before other routes that might create notifications
