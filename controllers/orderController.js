@@ -141,8 +141,8 @@ const createOrder = async (req, res) => {
         salesTaxAmount: breakdown.salesTaxAmount,
         customDutyAmount: breakdown.customDutyAmount,
         withholdingTaxAmount: breakdown.withholdingTaxAmount,
-        exemptions:product.exemptions,
-        unitOfMeasurement:product.unitOfMeasurement,
+        exemptions: product.exemptions,
+        unitOfMeasurement: product.unitOfMeasurement,
         marginAmount: breakdown.marginAmount,
         discountAmount: breakdown.discountAmount,
         quantity: parseInt(item.quantity),
@@ -191,6 +191,160 @@ const createOrder = async (req, res) => {
     }
     return res.status(500).json({
       message: "Server error while creating order",
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+};
+
+const createSplitPaymentOrder = async (req, res) => {
+  try {
+    console.log("Received split payment order data:", req.body);
+    const { userName, userPhone, cashierId, date, items, totalPrice, splitPayments } = req.body;
+
+    const cashier = await User.findById(cashierId).select("username");
+    if (!cashier) {
+      return res.status(404).json({ message: "Cashier not found" });
+    }
+    const cashierName = cashier.username;
+
+    // Validate required fields
+    if (!userName || !userPhone || !cashierId || !date || !items?.length || !totalPrice || !splitPayments?.length) {
+      return res.status(400).json({
+        message: "Missing required order data",
+        required: ["userName", "userPhone", "cashierId", "date", "items", "totalPrice", "splitPayments"]
+      });
+    }
+
+    // Validate split payments
+    const totalSplitAmount = splitPayments.reduce((sum, payment) => {
+      return sum + parseFloat(payment.amount || 0);
+    }, 0);
+
+    if (Math.abs(totalSplitAmount - totalPrice) > 0.01) {
+      return res.status(400).json({
+        message: `Split payment total (${totalSplitAmount.toFixed(2)}) must equal order total (${totalPrice.toFixed(2)})`
+      });
+    }
+
+    // Validate each split payment
+    for (const payment of splitPayments) {
+      if (!["cash", "card", "mobile"].includes(payment.method)) {
+        return res.status(400).json({
+          message: `Invalid payment method: ${payment.method}. Must be 'cash', 'card', or 'mobile'`
+        });
+      }
+      if (isNaN(payment.amount) || payment.amount <= 0) {
+        return res.status(400).json({
+          message: "Each payment amount must be greater than 0"
+        });
+      }
+    }
+
+    // Validate items structure and get full product details with pricing breakdown
+    const processedItems = [];
+    let totalSalesTax = 0;
+    let totalCustomDuty = 0;
+    let totalWithholdingTax = 0;
+    let totalMargin = 0;
+    let totalDiscount = 0;
+    let totalCostPrice = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+
+      if (!item.productId || !item.name || !item.sellingPrice || !item.quantity) {
+        return res.status(400).json({
+          message: `Item at index ${i} is missing required fields: productId, name, sellingPrice, quantity`
+        });
+      }
+
+      const product = await Products.findById(item.productId);
+      if (!product) {
+        return res.status(404).json({
+          message: `Product not found: ${item.name}`
+        });
+      }
+
+      if (product.quantity < item.quantity) {
+        return res.status(400).json({
+          message: `Insufficient stock for product: ${item.name}. Available: ${product.quantity}, Requested: ${item.quantity}`
+        });
+      }
+
+      const breakdown = calculateItemBreakdown(product, parseInt(item.quantity));
+
+      totalSalesTax += breakdown.salesTaxAmount * item.quantity;
+      totalCustomDuty += breakdown.customDutyAmount * item.quantity;
+      totalWithholdingTax += breakdown.withholdingTaxAmount * item.quantity;
+      totalMargin += breakdown.marginAmount * item.quantity;
+      totalDiscount += breakdown.discountAmount * item.quantity;
+      totalCostPrice += breakdown.costPrice * item.quantity;
+
+      processedItems.push({
+        productId: item.productId,
+        name: item.name,
+        barcode: product.barcode,
+        hsCode: product.hsCode,
+        costPrice: breakdown.costPrice,
+        sellingPrice: breakdown.sellingPrice,
+        sellingPriceWithoutDiscount: breakdown.sellingPriceWithoutDiscount,
+        salesTax: breakdown.salesTax,
+        customDuty: breakdown.customDuty,
+        withholdingTax: breakdown.withholdingTax,
+        marginPercent: breakdown.marginPercent,
+        discount: breakdown.discount,
+        salesTaxAmount: breakdown.salesTaxAmount,
+        customDutyAmount: breakdown.customDutyAmount,
+        withholdingTaxAmount: breakdown.withholdingTaxAmount,
+        exemptions: product.exemptions,
+        unitOfMeasurement: product.unitOfMeasurement,
+        marginAmount: breakdown.marginAmount,
+        discountAmount: breakdown.discountAmount,
+        quantity: parseInt(item.quantity),
+        subtotal: breakdown.subtotal,
+      });
+    }
+
+    // Create the order with split payment details
+    const order = new Order({
+      userName: userName.trim(),
+      userPhone: userPhone.trim(),
+      cashierId,
+      cashierName,
+      date: new Date(date),
+      items: processedItems,
+      totalPrice: parseFloat(totalPrice),
+      totalSalesTax: Number(totalSalesTax.toFixed(2)),
+      totalCustomDuty: Number(totalCustomDuty.toFixed(2)),
+      totalWithholdingTax: Number(totalWithholdingTax.toFixed(2)),
+      totalMargin: Number(totalMargin.toFixed(2)),
+      totalDiscount: Number(totalDiscount.toFixed(2)),
+      totalCostPrice: Number(totalCostPrice.toFixed(2)),
+      paymentMethod: "split",
+      splitPayments: splitPayments.map(p => ({
+        method: p.method,
+        amount: parseFloat(p.amount)
+      }))
+    });
+
+    const savedOrder = await order.save();
+    console.log("Split payment order saved successfully:", savedOrder._id);
+
+    return res.status(201).json({
+      success: true,
+      message: "Split payment order created successfully",
+      ...savedOrder.toObject()
+    });
+  } catch (err) {
+    console.error("Error creating split payment order:", err);
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({
+        message: "Validation error",
+        errors: Object.values(err.errors).map(e => e.message)
+      });
+    }
+    return res.status(500).json({
+      message: "Server error while creating split payment order",
       error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
     });
   }
@@ -420,6 +574,7 @@ const deleteOrder = async (req, res) => {
 
 module.exports = {
   createOrder,
+  createSplitPaymentOrder,
   getOrderStats,
   getRecentOrders,
   decreaseProductQuantity,

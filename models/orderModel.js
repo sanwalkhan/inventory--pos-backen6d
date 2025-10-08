@@ -15,9 +15,9 @@ const OrderItemSchema = new mongoose.Schema({
   },
 
   // Pricing information
-  costPrice: { type: Number, required: true }, // Original cost price
-  sellingPrice: { type: Number, required: true }, // Final selling price (after all calculations)
-  sellingPriceWithoutDiscount: { type: Number, required: true }, // Price before discount
+  costPrice: { type: Number, required: true },
+  sellingPrice: { type: Number, required: true },
+  sellingPriceWithoutDiscount: { type: Number, required: true },
 
   // Tax rates (percentages)
   salesTax: { type: Number, default: 0, min: 0, max: 100 },
@@ -28,22 +28,23 @@ const OrderItemSchema = new mongoose.Schema({
     scheduleNo: { type: String, trim: true, default: '' },
     itemNo: { type: String, trim: true, default: '' }
   },
-unitOfMeasurement: {
-  type: String,
-  required: true,
-  enum: [
-    'kg', 'g', 'ton', 'lb', 'oz', // Weight
-    'liter', 'ml', 'gallon', 'quart', // Volume
-    'meter', 'cm', 'mm', 'inch', 'ft', 'yard', // Length
-    'sqm', 'sqft', 'sqcm', // Area
-    'piece', 'dozen', 'pair', 'set', // Count
-    'box', 'pack', 'carton', 'bundle', // Package
-    'hour', 'day', 'month', 'year', // Time
-    'kwh', 'mwh', // Energy
-    'other'
-  ],
-  default: 'piece'
-},
+  unitOfMeasurement: {
+    type: String,
+    required: true,
+    enum: [
+      'kg', 'g', 'ton', 'lb', 'oz',
+      'liter', 'ml', 'gallon', 'quart',
+      'meter', 'cm', 'mm', 'inch', 'ft', 'yard',
+      'sqm', 'sqft', 'sqcm',
+      'piece', 'dozen', 'pair', 'set',
+      'box', 'pack', 'carton', 'bundle',
+      'hour', 'day', 'month', 'year',
+      'kwh', 'mwh',
+      'other'
+    ],
+    default: 'piece'
+  },
+
   // Margin and discount (percentages)
   marginPercent: { type: Number, default: 0, min: 0, max: 100 },
   discount: { type: Number, default: 0, min: 0, max: 100 },
@@ -59,7 +60,7 @@ unitOfMeasurement: {
   quantity: { type: Number, required: true },
 
   // Total calculations
-  subtotal: { type: Number, required: true }, // quantity * sellingPrice
+  subtotal: { type: Number, required: true },
 
   // For tracking refunds
   originalQuantity: { type: Number },
@@ -86,6 +87,20 @@ const OrderRefundHistorySchema = new mongoose.Schema({
   reason: { type: String, default: "Customer request" }
 });
 
+// Split Payment Schema
+const SplitPaymentSchema = new mongoose.Schema({
+  method: {
+    type: String,
+    enum: ["cash", "card", "mobile"],
+    required: true
+  },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0
+  }
+}, { _id: false });
+
 const OrderSchema = new mongoose.Schema({
   userName: { type: String, required: true },
   userPhone: { type: String, required: true },
@@ -95,8 +110,8 @@ const OrderSchema = new mongoose.Schema({
   items: [OrderItemSchema],
 
   // Totals
-  totalPrice: { type: Number, required: true }, // Final total after all calculations
-  originalTotalPrice: { type: Number }, // For refund tracking
+  totalPrice: { type: Number, required: true },
+  originalTotalPrice: { type: Number },
   totalRefunded: { type: Number, default: 0 },
 
   // Aggregate tax and pricing info
@@ -109,9 +124,13 @@ const OrderSchema = new mongoose.Schema({
 
   paymentMethod: {
     type: String,
-    enum: ["cash", "card", "mobile"],
+    enum: ["cash", "card", "mobile", "split"],
     required: true
   },
+
+  // Split payment details
+  splitPayments: [SplitPaymentSchema],
+
   status: {
     type: String,
     enum: ["completed", "partially_refunded", "fully_refunded"],
@@ -127,7 +146,7 @@ OrderSchema.index({ userPhone: 1 });
 OrderSchema.index({ date: -1 });
 OrderSchema.index({ cashierId: 1 });
 OrderSchema.index({ status: 1 });
-OrderSchema.index({ 'items.hsCode': 1 }); // Index for HS code queries
+OrderSchema.index({ 'items.hsCode': 1 });
 
 const Order = mongoose.model("Order", OrderSchema);
 module.exports = { Order };
