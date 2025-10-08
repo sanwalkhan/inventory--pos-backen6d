@@ -141,6 +141,8 @@ const createOrder = async (req, res) => {
         salesTaxAmount: breakdown.salesTaxAmount,
         customDutyAmount: breakdown.customDutyAmount,
         withholdingTaxAmount: breakdown.withholdingTaxAmount,
+        exemptions:product.exemptions,
+        unitOfMeasurement:product.unitOfMeasurement,
         marginAmount: breakdown.marginAmount,
         discountAmount: breakdown.discountAmount,
         quantity: parseInt(item.quantity),

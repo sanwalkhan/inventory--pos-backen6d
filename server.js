@@ -56,6 +56,7 @@ const supervisorRouter = require("./routes/supervisorRoutes");
 const resetPasswordRouter = require("./routes/ResetPasswordRoutes");
 const currencyRouter = require("./routes/currencyRoutes");
 const NotificationRouter = require("./routes/notificationRoutes");
+const chatbotRouter = require("./routes/chatbotRoutes");
 
 
 
@@ -152,6 +153,7 @@ app.use("/api", cashierRouter);
 app.use("/api", supervisorRouter);
 app.use("/api", resetPasswordRouter);
 app.use("/api", currencyRouter);
+app.use("/api/chatbot", chatbotRouter);
 
 
 // Schedule: Run every day at 12 AM Pakistan time

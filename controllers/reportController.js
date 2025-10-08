@@ -387,6 +387,8 @@ const getProductSalesOverview = async (req, res) => {
       salesTax: 1,
       customDuty: 1,
       withholdingTax: 1,
+      exemptions: 1,
+      unitOfMeasurement: 1,
       marginPercent: 1,
       discount: 1
     }).lean();
@@ -427,26 +429,28 @@ const getProductSalesOverview = async (req, res) => {
     });
 
     // Map products with ALL fields
-    const result = allProducts.map((prod) => ({
-      name: prod.name,
-      price: prod.price || 0,
-      sellingPrice: prod.sellingPrice || 0,
-      sellingPriceWithoutDiscount: prod.sellingPriceWithoutDiscount || 0,
-      barcode: prod.barcode,
-      hsCode: prod.hsCode,
-      salesTax: prod.salesTax || 0,
-      customDuty: prod.customDuty || 0,
-      withholdingTax: prod.withholdingTax || 0,
-      marginPercent: prod.marginPercent || 0,
-      discount: prod.discount || 0,
-      totalSold: salesMap[prod.name]?.totalSold || 0,
-      totalRevenue: salesMap[prod.name]?.totalRevenue || 0,
-      totalSalesTax: salesMap[prod.name]?.totalSalesTax || 0,
-      totalCustomDuty: salesMap[prod.name]?.totalCustomDuty || 0,
-      totalWithholdingTax: salesMap[prod.name]?.totalWithholdingTax || 0,
-      totalMargin: salesMap[prod.name]?.totalMargin || 0,
-      totalDiscount: salesMap[prod.name]?.totalDiscount || 0,
-    }));
+const result = allProducts.map((prod) => ({
+  name: prod.name,
+  price: prod.price || 0,
+  sellingPrice: prod.sellingPrice || 0,
+  sellingPriceWithoutDiscount: prod.sellingPriceWithoutDiscount || 0,
+  barcode: prod.barcode,
+  hsCode: prod.hsCode,
+  salesTax: prod.salesTax || 0,
+  customDuty: prod.customDuty || 0,
+  withholdingTax: prod.withholdingTax || 0,
+  marginPercent: prod.marginPercent || 0,
+  discount: prod.discount || 0,
+  exemptions: prod.exemptions || { spoNo: '', scheduleNo: '', itemNo: '' },  // ✅ CORRECT - from Products
+  unitOfMeasurement: prod.unitOfMeasurement || 'N/A',  // ✅ CORRECT - from Products
+  totalSold: salesMap[prod.name]?.totalSold || 0,
+  totalRevenue: salesMap[prod.name]?.totalRevenue || 0,
+  totalSalesTax: salesMap[prod.name]?.totalSalesTax || 0,
+  totalCustomDuty: salesMap[prod.name]?.totalCustomDuty || 0,
+  totalWithholdingTax: salesMap[prod.name]?.totalWithholdingTax || 0,
+  totalMargin: salesMap[prod.name]?.totalMargin || 0,
+  totalDiscount: salesMap[prod.name]?.totalDiscount || 0,
+}));
 
     let filteredProducts = result;
     if (category === "unsold") {
@@ -487,6 +491,7 @@ const getProductSalesOverview = async (req, res) => {
         hasPrevPage: pageNum > 1,
       }
     });
+   
   } catch (error) {
     console.error("Error in getProductSalesOverview:", error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -534,6 +539,8 @@ const getProductsSoldBetweenDates = async (req, res) => {
       salesTax: 1,
       customDuty: 1,
       withholdingTax: 1,
+      exemptions: 1,
+      unitOfMeasurement: 1,
       marginPercent: 1,
       discount: 1
     }).lean();
@@ -573,26 +580,28 @@ const getProductsSoldBetweenDates = async (req, res) => {
       };
     });
 
-    const result = allProducts.map((prod) => ({
-      name: prod.name,
-      price: prod.price || 0,
-      sellingPrice: prod.sellingPrice || 0,
-      sellingPriceWithoutDiscount: prod.sellingPriceWithoutDiscount || 0,
-      barcode: prod.barcode,
-      hsCode: prod.hsCode,
-      salesTax: prod.salesTax || 0,
-      customDuty: prod.customDuty || 0,
-      withholdingTax: prod.withholdingTax || 0,
-      marginPercent: prod.marginPercent || 0,
-      discount: prod.discount || 0,
-      totalSold: salesMap[prod.name]?.totalSold || 0,
-      totalRevenue: salesMap[prod.name]?.totalRevenue || 0,
-      totalSalesTax: salesMap[prod.name]?.totalSalesTax || 0,
-      totalCustomDuty: salesMap[prod.name]?.totalCustomDuty || 0,
-      totalWithholdingTax: salesMap[prod.name]?.totalWithholdingTax || 0,
-      totalMargin: salesMap[prod.name]?.totalMargin || 0,
-      totalDiscount: salesMap[prod.name]?.totalDiscount || 0,
-    }));
+   const result = allProducts.map((prod) => ({
+  name: prod.name,
+  price: prod.price || 0,
+  sellingPrice: prod.sellingPrice || 0,
+  sellingPriceWithoutDiscount: prod.sellingPriceWithoutDiscount || 0,
+  barcode: prod.barcode,
+  hsCode: prod.hsCode,
+  salesTax: prod.salesTax || 0,
+  customDuty: prod.customDuty || 0,
+  withholdingTax: prod.withholdingTax || 0,
+  marginPercent: prod.marginPercent || 0,
+  discount: prod.discount || 0,
+  exemptions: prod.exemptions || { spoNo: '', scheduleNo: '', itemNo: '' },  // ✅ CORRECT - from Products
+  unitOfMeasurement: prod.unitOfMeasurement || 'N/A',  // ✅ CORRECT - from Products
+  totalSold: salesMap[prod.name]?.totalSold || 0,
+  totalRevenue: salesMap[prod.name]?.totalRevenue || 0,
+  totalSalesTax: salesMap[prod.name]?.totalSalesTax || 0,
+  totalCustomDuty: salesMap[prod.name]?.totalCustomDuty || 0,
+  totalWithholdingTax: salesMap[prod.name]?.totalWithholdingTax || 0,
+  totalMargin: salesMap[prod.name]?.totalMargin || 0,
+  totalDiscount: salesMap[prod.name]?.totalDiscount || 0,
+}));
 
     result.sort((a, b) => b.totalSold - a.totalSold);
 
@@ -613,6 +622,7 @@ const getProductsSoldBetweenDates = async (req, res) => {
         hasPrevPage: pageNum > 1,
       }
     });
+    console.log(res.json(result));
   } catch (error) {
     console.error("Error in getProductsSoldBetweenDates:", error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -747,6 +757,8 @@ const getSalesByHsCode = async (req, res) => {
           totalWithholdingTax: { $sum: { $multiply: ["$items.withholdingTaxAmount", "$items.quantity"] } },
           totalMargin: { $sum: { $multiply: ["$items.marginAmount", "$items.quantity"] } },
           totalDiscount: { $sum: { $multiply: ["$items.discountAmount", "$items.quantity"] } },
+          
+          
         }
       },
       { $sort: { totalRevenue: -1 } }
@@ -789,10 +801,13 @@ const getSalesByHsCode = async (req, res) => {
         totalSalesTax: item.totalSalesTax,
         totalCustomDuty: item.totalCustomDuty,
         totalWithholdingTax: item.totalWithholdingTax,
+        exemptions: item.exemptions,
+        unitOfMeasurement: item.unitOfMeasurement,
         totalMargin: item.totalMargin,
         totalDiscount: item.totalDiscount,
       }))
     });
+  console.log(res.json(result));
   } catch (error) {
     console.error("Error in getSalesByHsCode:", error);
     res.status(500).json({ message: "Server error", error: error.message });

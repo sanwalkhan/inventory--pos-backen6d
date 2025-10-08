@@ -23,7 +23,27 @@ const OrderItemSchema = new mongoose.Schema({
   salesTax: { type: Number, default: 0, min: 0, max: 100 },
   customDuty: { type: Number, default: 0, min: 0, max: 100 },
   withholdingTax: { type: Number, default: 0, min: 0, max: 100 },
-
+  exemptions: {
+    spoNo: { type: String, trim: true, default: '' },
+    scheduleNo: { type: String, trim: true, default: '' },
+    itemNo: { type: String, trim: true, default: '' }
+  },
+unitOfMeasurement: {
+  type: String,
+  required: true,
+  enum: [
+    'kg', 'g', 'ton', 'lb', 'oz', // Weight
+    'liter', 'ml', 'gallon', 'quart', // Volume
+    'meter', 'cm', 'mm', 'inch', 'ft', 'yard', // Length
+    'sqm', 'sqft', 'sqcm', // Area
+    'piece', 'dozen', 'pair', 'set', // Count
+    'box', 'pack', 'carton', 'bundle', // Package
+    'hour', 'day', 'month', 'year', // Time
+    'kwh', 'mwh', // Energy
+    'other'
+  ],
+  default: 'piece'
+},
   // Margin and discount (percentages)
   marginPercent: { type: Number, default: 0, min: 0, max: 100 },
   discount: { type: Number, default: 0, min: 0, max: 100 },
