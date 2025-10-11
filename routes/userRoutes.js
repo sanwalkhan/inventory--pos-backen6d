@@ -7,10 +7,11 @@ const {
   deleteUser,
   getcurrentUser
 } = require("../controllers/userController");
+const { authenticate } = require("../middleware/authmiddleware");
 
 // Get all users
 router.get("/users/all", getAllUsers);
-router.get("/users/:id",getcurrentUser);
+router.get("/users/:id", authenticate ,getcurrentUser);
 
 // Add a new user
 router.post("/users", addUser);
