@@ -129,30 +129,41 @@ const addProduct = async (req, res) => {
       return res.status(400).json({ message: "All fields including image are required" });
     }
 
-    // Get subcategory to fetch tax rates and HS code
-    const subcategory = await Subcategory.findById(subcategoryId).populate('category');
-    if (!subcategory) {
-      return res.status(400).json({ message: "Invalid subcategory" });
+    if (name.length > 100) {
+      return res.status(400).json({ message: "Product name must not exceed 100 characters" });
     }
+
+    if (quantity > 10000) {
+      return res.status(400).json({ message: "Quantity cannot exceed 10,000" });
+    }
+    if(marginPercent > 100) {
+      return res.status(400).json({ message: "Margin cannot exceed 100%" });
+    }
+    if(discount > 100) {
+      return res.status(400).json({ message: "Discount cannot exceed 100%" });
+    }
+    if(discount > marginPercent) {
+      return res.status(400).json({ message: "Discount cannot exceed margin" });
+    }
+    if(description.length > 500) {
+      return res.status(400).json({ message: "Description cannot exceed 1000 characters" });
+    }
+    const subcategory = await Subcategory.findById(subcategoryId).populate("category");
+    if (!subcategory) return res.status(400).json({ message: "Invalid subcategory" });
 
     const normalizedBarcode = barcode.trim().toLowerCase();
     const normalizedName = name.trim().toLowerCase();
 
-    // Duplicate barcode check
     const existingBarcode = await Products.findOne({ barcode: normalizedBarcode });
-    if (existingBarcode) {
+    if (existingBarcode)
       return res.status(409).json({ message: "Product with this barcode already exists." });
-    }
 
-    // Duplicate name check (case-insensitive)
     const existingName = await Products.findOne({
       name: { $regex: new RegExp(`^${normalizedName}$`, "i") },
     });
-    if (existingName) {
+    if (existingName)
       return res.status(409).json({ message: "Product with this name already exists." });
-    }
 
-    // Calculate selling prices using subcategory tax rates
     const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
       price,
       salesTax: subcategory.salesTax,
@@ -170,16 +181,16 @@ const addProduct = async (req, res) => {
       categoryId,
       subcategoryId,
       description,
-      hsCode: subcategory.hsCode, // Store 8-digit HS code from subcategory
+      hsCode: subcategory.hsCode,
       salesTax: subcategory.salesTax,
       customDuty: subcategory.customDuty,
       withholdingTax: subcategory.withholdingTax,
-        exemptions: {
-    spoNo: subcategory.exemptions?.spoNo || '',
-    scheduleNo: subcategory.exemptions?.scheduleNo || '',
-    itemNo: subcategory.exemptions?.itemNo || ''
-  },
-  unitOfMeasurement: subcategory.unitOfMeasurement || 'piece',
+      exemptions: {
+        spoNo: subcategory.exemptions?.spoNo || "",
+        scheduleNo: subcategory.exemptions?.scheduleNo || "",
+        itemNo: subcategory.exemptions?.itemNo || "",
+      },
+      unitOfMeasurement: subcategory.unitOfMeasurement || "piece",
       marginPercent: parseFloat(marginPercent),
       discount: parseFloat(discount),
       sellingPriceWithoutDiscount,
@@ -195,6 +206,7 @@ const addProduct = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 // Update product with enhanced price calculation
 const updateProduct = async (req, res) => {
@@ -216,39 +228,37 @@ const updateProduct = async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const product = await Products.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
+    if (name.length > 100) {
+      return res.status(400).json({ message: "Product name must not exceed 100 characters" });
     }
 
-    // Get subcategory to fetch tax rates and HS code
-    const subcategory = await Subcategory.findById(subcategoryId).populate('category');
-    if (!subcategory) {
-      return res.status(400).json({ message: "Invalid subcategory" });
+    if (quantity > 10000) {
+      return res.status(400).json({ message: "Quantity cannot exceed 10,000" });
     }
+
+    const product = await Products.findById(id);
+    if (!product) return res.status(404).json({ message: "Product not found" });
+
+    const subcategory = await Subcategory.findById(subcategoryId).populate("category");
+    if (!subcategory) return res.status(400).json({ message: "Invalid subcategory" });
 
     const normalizedBarcode = barcode.trim().toLowerCase();
     const normalizedName = name.trim().toLowerCase();
 
-    // Duplicate barcode check excluding this product
     const duplicateBarcode = await Products.findOne({
       _id: { $ne: id },
       barcode: normalizedBarcode,
     });
-    if (duplicateBarcode) {
+    if (duplicateBarcode)
       return res.status(409).json({ message: "Another product with this barcode already exists." });
-    }
 
-    // Duplicate name check excluding this product (case-insensitive)
     const duplicateName = await Products.findOne({
       _id: { $ne: id },
       name: { $regex: new RegExp(`^${normalizedName}$`, "i") },
     });
-    if (duplicateName) {
+    if (duplicateName)
       return res.status(409).json({ message: "Another product with this name already exists." });
-    }
 
-    // Calculate selling prices using subcategory tax rates
     const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
       price,
       salesTax: subcategory.salesTax,
@@ -266,16 +276,16 @@ const updateProduct = async (req, res) => {
       categoryId,
       subcategoryId,
       description,
-      hsCode: subcategory.hsCode, // Update HS code from subcategory
+      hsCode: subcategory.hsCode,
       salesTax: subcategory.salesTax,
       customDuty: subcategory.customDuty,
       withholdingTax: subcategory.withholdingTax,
-        exemptions: {
-    spoNo: subcategory.exemptions?.spoNo || '',
-    scheduleNo: subcategory.exemptions?.scheduleNo || '',
-    itemNo: subcategory.exemptions?.itemNo || ''
-  },
-  unitOfMeasurement: subcategory.unitOfMeasurement || 'piece',
+      exemptions: {
+        spoNo: subcategory.exemptions?.spoNo || "",
+        scheduleNo: subcategory.exemptions?.scheduleNo || "",
+        itemNo: subcategory.exemptions?.itemNo || "",
+      },
+      unitOfMeasurement: subcategory.unitOfMeasurement || "piece",
       marginPercent: parseFloat(marginPercent || product.marginPercent),
       discount: parseFloat(discount),
       sellingPriceWithoutDiscount,
@@ -283,15 +293,12 @@ const updateProduct = async (req, res) => {
     };
 
     if (req.file) {
-      if (product.imagePublicId) {
-        await cloudinary.uploader.destroy(product.imagePublicId);
-      }
+      if (product.imagePublicId) await cloudinary.uploader.destroy(product.imagePublicId);
       updateData.image = req.file.path;
       updateData.imagePublicId = req.file.filename;
     }
 
     const updatedProduct = await Products.findByIdAndUpdate(id, updateData, { new: true });
-
     res.status(200).json({ message: "Product updated successfully", product: updatedProduct });
   } catch (error) {
     console.error("Error updating product:", error.message);

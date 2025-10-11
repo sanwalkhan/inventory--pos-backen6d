@@ -2,11 +2,22 @@ const Supplier = require('../models/supplierModel');
 const { Products } = require('../models/productModel');
 const mongoose = require('mongoose');
 
-// Create new supplier
+// ✅ Create new supplier
 exports.createSupplier = async (req, res) => {
   try {
     const { name, email, mobile, address } = req.body;
-    console.log("📩 Incoming body:", req.body);
+    console.log("📩 Incoming supplier body:", req.body);
+
+    // Basic field validation
+    if (!name || !email || !mobile || !address) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+
+    // ✅ Field constraints
+    if (name.length > 100) return res.status(400).json({ error: "Name must be 100 characters or less" });
+    if (email.length > 100) return res.status(400).json({ error: "Email must be 100 characters or less" });
+    if (!/^\d{1,14}$/.test(mobile)) return res.status(400).json({ error: "Mobile number must contain up to 14 digits" });
+    if (address.length > 250) return res.status(400).json({ error: "Address must be 250 characters or less" });
 
     const existingSupplier = await Supplier.findOne({ email });
     const existingPhone = await Supplier.findOne({ mobile });
@@ -16,16 +27,16 @@ exports.createSupplier = async (req, res) => {
     }
 
     const supplier = new Supplier({
-      name: name?.trim(),
-      email: email?.toLowerCase().trim(),
-      mobile: mobile?.trim(),
-      address: address?.trim()
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      mobile: mobile.trim(),
+      address: address.trim()
     });
 
     await supplier.save();
     res.status(201).json({ message: "Supplier created successfully", supplier });
   } catch (err) {
-    console.error("❌ Supplier creation error:", err);   // 👈 this line is key
+    console.error("❌ Supplier creation error:", err);
     if (err.code === 11000) {
       return res.status(400).json({ error: "Supplier with this email already exists" });
     }
@@ -33,19 +44,17 @@ exports.createSupplier = async (req, res) => {
       const messages = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({ error: messages.join(", ") });
     }
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 };
 
-
-// Get all suppliers with optional search and pagination
+// ✅ Get all suppliers (search + pagination)
 exports.getSuppliers = async (req, res) => {
   try {
     const { search, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     const skip = (page - 1) * limit;
+    const query = { isActive: true };
 
-    let query = { isActive: true };
-    
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: 'i' } },
@@ -76,92 +85,78 @@ exports.getSuppliers = async (req, res) => {
   }
 };
 
-// Get single supplier by ID
+// ✅ Get single supplier by ID
 exports.getSupplierById = async (req, res) => {
   try {
     const supplier = await Supplier.findById(req.params.id)
       .populate('orders.items.productId', 'name barcode price');
-    
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
-
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
     res.json(supplier);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// Update supplier
+// ✅ Update supplier
 exports.updateSupplier = async (req, res) => {
   try {
     const { name, email, mobile, address } = req.body;
     const supplierId = req.params.id;
 
-    // Check if email is being changed and if it's already taken by another supplier
+    const updateData = {};
+    if (name) {
+      if (name.length > 100) return res.status(400).json({ error: "Name must be 100 characters or less" });
+      updateData.name = name.trim();
+    }
     if (email) {
+      if (email.length > 100) return res.status(400).json({ error: "Email must be 100 characters or less" });
       const existingSupplier = await Supplier.findOne({ 
         email: email.toLowerCase().trim(),
         _id: { $ne: supplierId }
       });
-      
       if (existingSupplier) {
-        return res.status(400).json({ 
-          error: 'Another supplier with this email already exists' 
-        });
+        return res.status(400).json({ error: 'Another supplier with this email already exists' });
       }
+      updateData.email = email.toLowerCase().trim();
     }
-
-    const updateData = {};
-    if (name) updateData.name = name.trim();
-    if (email) updateData.email = email.toLowerCase().trim();
-    if (mobile) updateData.mobile = mobile.trim();
-    if (address !== undefined) updateData.address = address?.trim();
+    if (mobile) {
+      if (!/^\d{1,14}$/.test(mobile)) return res.status(400).json({ error: "Mobile number must contain up to 14 digits" });
+      updateData.mobile = mobile.trim();
+    }
+    if (address !== undefined) {
+      if (address.length > 250) return res.status(400).json({ error: "Address must be 250 characters or less" });
+      updateData.address = address.trim();
+    }
 
     const supplier = await Supplier.findByIdAndUpdate(
-      supplierId,
-      updateData,
-      { new: true, runValidators: true }
+      supplierId, updateData, { new: true, runValidators: true }
     );
 
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
-    res.json({
-      message: 'Supplier updated successfully',
-      supplier
-    });
+    res.json({ message: 'Supplier updated successfully', supplier });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({ 
-        error: 'Supplier with this email already exists' 
-      });
+      return res.status(400).json({ error: 'Supplier with this email already exists' });
     }
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 };
 
-// Soft delete supplier
+// ✅ Soft delete supplier
 exports.deleteSupplier = async (req, res) => {
   try {
     const supplier = await Supplier.findByIdAndUpdate(
-      req.params.id,
-      { isActive: false },
-      { new: true }
+      req.params.id, { isActive: false }, { new: true }
     );
-
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
-
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
     res.json({ message: 'Supplier deleted successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// Add new order to supplier
+// ✅ Add new order
 exports.addOrder = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -170,21 +165,17 @@ exports.addOrder = async (req, res) => {
     const { id: supplierId } = req.params;
     const { orderId, items, paidAmount, notes } = req.body;
 
-    // Validate supplier exists
     const supplier = await Supplier.findById(supplierId).session(session);
     if (!supplier) {
       await session.abortTransaction();
       return res.status(404).json({ error: 'Supplier not found' });
     }
 
-    // Check if order ID already exists for this supplier
-    const existingOrder = supplier.orders.find(order => order.orderId === orderId);
-    if (existingOrder) {
+    if (supplier.orders.find(order => order.orderId === orderId)) {
       await session.abortTransaction();
       return res.status(400).json({ error: 'Order ID already exists for this supplier' });
     }
 
-    // Validate and process items
     const processedItems = [];
     let totalAmount = 0;
 
@@ -192,9 +183,13 @@ exports.addOrder = async (req, res) => {
       const product = await Products.findById(item.productId).session(session);
       if (!product) {
         await session.abortTransaction();
-        return res.status(404).json({ 
-          error: `Product not found: ${item.productId}` 
-        });
+        return res.status(404).json({ error: `Product not found: ${item.productId}` });
+      }
+
+      // ✅ Restrict product order quantity to 500 max
+      if (item.quantity > 500) {
+        await session.abortTransaction();
+        return res.status(400).json({ error: `Cannot order more than 500 units for ${product.name}` });
       }
 
       const itemTotal = item.quantity * item.unitPrice;
@@ -213,8 +208,7 @@ exports.addOrder = async (req, res) => {
 
     const dueAmount = totalAmount - (paidAmount || 0);
 
-    // Create new order
-    const newOrder = {
+    supplier.orders.push({
       orderId,
       items: processedItems,
       totalAmount,
@@ -222,20 +216,15 @@ exports.addOrder = async (req, res) => {
       dueAmount,
       notes: notes?.trim(),
       status: 'pending'
-    };
+    });
 
-    supplier.orders.push(newOrder);
     await supplier.save({ session });
-
     await session.commitTransaction();
 
     const updatedSupplier = await Supplier.findById(supplierId)
       .populate('orders.items.productId', 'name barcode');
 
-    res.status(201).json({
-      message: 'Order added successfully',
-      supplier: updatedSupplier
-    });
+    res.status(201).json({ message: 'Order added successfully', supplier: updatedSupplier });
   } catch (err) {
     await session.abortTransaction();
     res.status(500).json({ error: err.message });
@@ -244,50 +233,40 @@ exports.addOrder = async (req, res) => {
   }
 };
 
-// Update order payment
+// ✅ Update order payment
 exports.updateOrderPayment = async (req, res) => {
   try {
     const { supplierId, orderId } = req.params;
     const { paidAmount } = req.body;
 
     const supplier = await Supplier.findById(supplierId);
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
     const order = supplier.orders.id(orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
+    if (!order) return res.status(404).json({ error: 'Order not found' });
 
     if (paidAmount < 0 || paidAmount > order.totalAmount) {
-      return res.status(400).json({ 
-        error: 'Invalid paid amount' 
-      });
+      return res.status(400).json({ error: 'Invalid paid amount' });
     }
 
     order.paidAmount = paidAmount;
     order.dueAmount = order.totalAmount - paidAmount;
-
     await supplier.save();
 
-    res.json({
-      message: 'Order payment updated successfully',
-      supplier
-    });
+    res.json({ message: 'Order payment updated successfully', supplier });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// Receive products (update inventory and mark as received)
+// ✅ Receive products
 exports.receiveProducts = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const { supplierId, orderId } = req.params;
-    const { receivedItems } = req.body; // Array of { itemId, receivedQuantity }
+    const { receivedItems } = req.body;
 
     const supplier = await Supplier.findById(supplierId).session(session);
     if (!supplier) {
@@ -301,40 +280,31 @@ exports.receiveProducts = async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // Process each received item
     for (const receivedItem of receivedItems) {
       const orderItem = order.items.id(receivedItem.itemId);
       if (!orderItem) {
         await session.abortTransaction();
-        return res.status(404).json({ 
-          error: `Order item not found: ${receivedItem.itemId}` 
-        });
+        return res.status(404).json({ error: `Order item not found: ${receivedItem.itemId}` });
       }
 
       const newReceivedQty = orderItem.receivedQuantity + receivedItem.receivedQuantity;
-      
       if (newReceivedQty > orderItem.quantity) {
         await session.abortTransaction();
-        return res.status(400).json({ 
-          error: `Cannot receive more than ordered quantity for ${orderItem.productName}` 
-        });
+        return res.status(400).json({ error: `Cannot receive more than ordered quantity for ${orderItem.productName}` });
       }
 
-      // Update product inventory
       await Products.findByIdAndUpdate(
         orderItem.productId,
         { $inc: { quantity: receivedItem.receivedQuantity } },
         { session }
       );
 
-      // Update order item
       orderItem.receivedQuantity = newReceivedQty;
       orderItem.isFullyReceived = newReceivedQty === orderItem.quantity;
     }
 
-    // Update order status
-    const allItemsFullyReceived = order.items.every(item => item.isFullyReceived);
-    const someItemsReceived = order.items.some(item => item.receivedQuantity > 0);
+    const allItemsFullyReceived = order.items.every(i => i.isFullyReceived);
+    const someItemsReceived = order.items.some(i => i.receivedQuantity > 0);
 
     if (allItemsFullyReceived) {
       order.status = 'fully_received';
@@ -350,10 +320,7 @@ exports.receiveProducts = async (req, res) => {
     const updatedSupplier = await Supplier.findById(supplierId)
       .populate('orders.items.productId', 'name barcode');
 
-    res.json({
-      message: 'Products received successfully',
-      supplier: updatedSupplier
-    });
+    res.json({ message: 'Products received successfully', supplier: updatedSupplier });
   } catch (err) {
     await session.abortTransaction();
     res.status(500).json({ error: err.message });
@@ -362,34 +329,26 @@ exports.receiveProducts = async (req, res) => {
   }
 };
 
-// Clear all dues for supplier
+// ✅ Clear all dues
 exports.clearAllDues = async (req, res) => {
   try {
     const { id } = req.params;
     const supplier = await Supplier.findById(id);
-    
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
-    // Update all orders to be fully paid
     supplier.orders.forEach(order => {
       order.paidAmount = order.totalAmount;
       order.dueAmount = 0;
     });
 
     await supplier.save();
-
-    res.json({ 
-      message: 'All dues cleared successfully', 
-      supplier 
-    });
+    res.json({ message: 'All dues cleared successfully', supplier });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// Get supplier purchase history
+// ✅ Get supplier purchase history
 exports.getSupplierHistory = async (req, res) => {
   try {
     const { id } = req.params;
@@ -397,34 +356,25 @@ exports.getSupplierHistory = async (req, res) => {
 
     const supplier = await Supplier.findById(id)
       .populate('orders.items.productId', 'name barcode price');
-
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
     let orders = supplier.orders;
 
-    // Filter by date range
     if (startDate || endDate) {
-      orders = orders.filter(order => {
-        const orderDate = new Date(order.orderDate);
-        if (startDate && orderDate < new Date(startDate)) return false;
-        if (endDate && orderDate > new Date(endDate)) return false;
-        return true;
+      orders = orders.filter(o => {
+        const d = new Date(o.orderDate);
+        return (!startDate || d >= new Date(startDate)) &&
+               (!endDate || d <= new Date(endDate));
       });
     }
 
-    // Filter by status
-    if (status) {
-      orders = orders.filter(order => order.status === status);
-    }
+    if (status) orders = orders.filter(o => o.status === status);
 
-    // Calculate summary
     const summary = {
       totalOrders: orders.length,
-      totalAmount: orders.reduce((sum, order) => sum + order.totalAmount, 0),
-      totalPaid: orders.reduce((sum, order) => sum + order.paidAmount, 0),
-      totalDue: orders.reduce((sum, order) => sum + order.dueAmount, 0),
+      totalAmount: orders.reduce((a, o) => a + o.totalAmount, 0),
+      totalPaid: orders.reduce((a, o) => a + o.paidAmount, 0),
+      totalDue: orders.reduce((a, o) => a + o.dueAmount, 0),
       statusBreakdown: {
         pending: orders.filter(o => o.status === 'pending').length,
         partially_received: orders.filter(o => o.status === 'partially_received').length,
@@ -447,29 +397,20 @@ exports.getSupplierHistory = async (req, res) => {
   }
 };
 
-// Delete specific order
+// ✅ Delete specific order
 exports.deleteOrder = async (req, res) => {
   try {
     const { supplierId, orderId } = req.params;
-
     const supplier = await Supplier.findById(supplierId);
-    if (!supplier) {
-      return res.status(404).json({ error: 'Supplier not found' });
-    }
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
-    const orderIndex = supplier.orders.findIndex(order => order._id.toString() === orderId);
-    if (orderIndex === -1) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
+    const orderIndex = supplier.orders.findIndex(o => o._id.toString() === orderId);
+    if (orderIndex === -1) return res.status(404).json({ error: 'Order not found' });
 
-    // Remove the order
     supplier.orders.splice(orderIndex, 1);
     await supplier.save();
 
-    res.json({
-      message: 'Order deleted successfully',
-      supplier
-    });
+    res.json({ message: 'Order deleted successfully', supplier });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

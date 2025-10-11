@@ -15,7 +15,7 @@ const orderSchema = new mongoose.Schema({
   cashierName: { type: String }, // Added cashier name
   paymentMethod: { 
     type: String, 
-    enum: ["cash", "card", "mobile"],
+    enum: ["cash", "card", "mobile" ,"split"],
     default: "cash" 
   }, // Added payment method
   totalAmount: { type: Number, required: true }, // Added total amount

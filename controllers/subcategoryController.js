@@ -18,28 +18,50 @@ const addSubcategory = async (req, res) => {
     } = req.body;
     const { id: categoryId } = req.params;
 
-    // Check category exists
+    // Check category existence
     const category = await Category.findById(categoryId);
     if (!category) {
       return res.status(404).json({ message: "Category not found" });
     }
 
-    // Validate subcategory HS code (4 digits)
-    if (!hsCode || hsCode.length !== 4 || !/^\d{4}$/.test(hsCode)) {
+    // Validate subcategory name
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({ message: "Subcategory name is required" });
+    }
+    if (name.length > 100) {
       return res.status(400).json({
-        message: "Subcategory HS code must be exactly 4 digits",
+        message: "Subcategory name must not exceed 100 characters",
       });
     }
 
-    // Create full HS code (category.subcategory)
+    // Check for duplicate subcategory name (case-insensitive)
+    const existingName = await Subcategory.findOne({
+      subcategoryName: { $regex: new RegExp(`^${name}$`, "i") },
+    });
+    if (existingName) {
+      return res
+        .status(400)
+        .json({ message: "Subcategory name already exists" });
+    }
+
+    // Validate subcategory HS code (4 digits)
+    if (!hsCode || hsCode.length !== 4 || !/^\d{4}$/.test(hsCode)) {
+      return res
+        .status(400)
+        .json({ message: "Subcategory HS code must be exactly 4 digits" });
+    }
+
+    // Create full HS code
     const fullHsCode = `${category.hsCode}.${hsCode}`;
 
     // Check if full HS code already exists
-    const existingSubcategory = await Subcategory.findOne({ hsCode: fullHsCode });
+    const existingSubcategory = await Subcategory.findOne({
+      hsCode: fullHsCode,
+    });
     if (existingSubcategory) {
-      return res.status(400).json({
-        message: "HS code already exists. Please choose a different code.",
-      });
+      return res
+        .status(400)
+        .json({ message: "HS code already exists. Please choose a different code." });
     }
 
     // Validate numeric fields
@@ -48,24 +70,26 @@ const addSubcategory = async (req, res) => {
     const withholdingTaxNum = parseFloat(withholdingTax);
 
     if (isNaN(salesTaxNum) || salesTaxNum < 0 || salesTaxNum > 100) {
-      return res.status(400).json({
-        message: "Sales tax must be a number between 0 and 100",
-      });
+      return res
+        .status(400)
+        .json({ message: "Sales tax must be a number between 0 and 100" });
     }
-
     if (isNaN(customDutyNum) || customDutyNum < 0 || customDutyNum > 100) {
-      return res.status(400).json({
-        message: "Custom duty must be a number between 0 and 100",
-      });
+      return res
+        .status(400)
+        .json({ message: "Custom duty must be a number between 0 and 100" });
+    }
+    if (
+      isNaN(withholdingTaxNum) ||
+      withholdingTaxNum < 0 ||
+      withholdingTaxNum > 100
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Withholding tax must be a number between 0 and 100" });
     }
 
-    if (isNaN(withholdingTaxNum) || withholdingTaxNum < 0 || withholdingTaxNum > 100) {
-      return res.status(400).json({
-        message: "Withholding tax must be a number between 0 and 100",
-      });
-    }
-
-    // Require image for new subcategory
+    // Require image
     if (!req.file) {
       return res.status(400).json({ message: "Image is required" });
     }
@@ -74,9 +98,9 @@ const addSubcategory = async (req, res) => {
     const imagePublicId = req.file.filename;
 
     const subcategory = new Subcategory({
-      subcategoryName: name,
+      subcategoryName: name.trim(),
       category: categoryId,
-      hsCode: fullHsCode, // Store full 8-digit HS code
+      hsCode: fullHsCode,
       salesTax: salesTaxNum,
       customDuty: customDutyNum,
       withholdingTax: withholdingTaxNum,
@@ -101,7 +125,9 @@ const addSubcategory = async (req, res) => {
 
     if (error.code === 11000) {
       if (error.keyPattern.subcategoryName) {
-        return res.status(400).json({ message: "Subcategory name already exists" });
+        return res
+          .status(400)
+          .json({ message: "Subcategory name already exists" });
       }
       if (error.keyPattern.hsCode) {
         return res.status(400).json({ message: "HS code already exists" });
@@ -116,8 +142,7 @@ const addSubcategory = async (req, res) => {
 const getSubcategoriesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const subcategories = await Subcategory.find({ category: categoryId })
-      .populate('category');
+    const subcategories = await Subcategory.find({ category: categoryId }).populate("category");
     res.status(200).json({ success: true, subcategories });
   } catch (error) {
     console.error("Error retrieving subcategories:", error.message);
@@ -128,10 +153,10 @@ const getSubcategoriesByCategory = async (req, res) => {
 // GET ALL SUBCATEGORIES
 const getSubcategories = async (req, res) => {
   try {
-    const subcategories = await Subcategory.find().populate('category');
-    res.status(200).json({ 
-      message: "Subcategories retrieved successfully", 
-      subcategories 
+    const subcategories = await Subcategory.find().populate("category");
+    res.status(200).json({
+      message: "Subcategories retrieved successfully",
+      subcategories,
     });
   } catch (error) {
     console.error("Error retrieving subcategories:", error.message);
@@ -155,70 +180,68 @@ const updateSubcategory = async (req, res) => {
     } = req.body;
     const { id } = req.params;
 
-    if (!subcategoryName) {
-      return res.status(400).json({ message: "Subcategory name is required" });
-    }
-
-    const subcategory = await Subcategory.findById(id).populate('category');
+    const subcategory = await Subcategory.findById(id).populate("category");
     if (!subcategory) {
       return res.status(404).json({ message: "Subcategory not found" });
     }
 
-    // If HS code is provided, validate and create full HS code
-    let fullHsCode = subcategory.hsCode; // Keep existing if not changing
-    if (hsCode && hsCode.length === 4 && /^\d{4}$/.test(hsCode)) {
+    // Validate name if provided
+    if (subcategoryName !== undefined) {
+      if (!subcategoryName.trim()) {
+        return res.status(400).json({ message: "Subcategory name is required" });
+      }
+      if (subcategoryName.length > 100) {
+        return res
+          .status(400)
+          .json({ message: "Subcategory name must not exceed 100 characters" });
+      }
+
+      // Case-insensitive duplicate check excluding current one
+      const duplicateName = await Subcategory.findOne({
+        subcategoryName: { $regex: new RegExp(`^${subcategoryName}$`, "i") },
+        _id: { $ne: id },
+      });
+      if (duplicateName) {
+        return res.status(400).json({
+          message: "Subcategory name already exists",
+        });
+      }
+    }
+
+    // Handle HS code updates
+    let fullHsCode = subcategory.hsCode;
+    if (hsCode && /^\d{4}$/.test(hsCode)) {
       fullHsCode = `${subcategory.category.hsCode}.${hsCode}`;
-      
-      // Check if new full HS code already exists (excluding current subcategory)
-      const existingSubcategory = await Subcategory.findOne({
+      const existing = await Subcategory.findOne({
         hsCode: fullHsCode,
         _id: { $ne: id },
       });
-      if (existingSubcategory) {
-        return res.status(400).json({
-          message: "HS code already exists. Please choose a different code.",
-        });
+      if (existing) {
+        return res
+          .status(400)
+          .json({ message: "HS code already exists. Please choose a different code." });
       }
     } else if (hsCode) {
-      return res.status(400).json({
-        message: "Subcategory HS code must be exactly 4 digits",
-      });
+      return res
+        .status(400)
+        .json({ message: "Subcategory HS code must be exactly 4 digits" });
     }
 
     // Validate numeric fields
-    if (salesTax !== undefined) {
-      const salesTaxNum = parseFloat(salesTax);
-      if (isNaN(salesTaxNum) || salesTaxNum < 0 || salesTaxNum > 100) {
-        return res.status(400).json({
-          message: "Sales tax must be a number between 0 and 100",
-        });
+    const numericCheck = (val, field) => {
+      const num = parseFloat(val);
+      if (isNaN(num) || num < 0 || num > 100) {
+        throw new Error(`${field} must be a number between 0 and 100`);
       }
-    }
-
-    if (customDuty !== undefined) {
-      const customDutyNum = parseFloat(customDuty);
-      if (isNaN(customDutyNum) || customDutyNum < 0 || customDutyNum > 100) {
-        return res.status(400).json({
-          message: "Custom duty must be a number between 0 and 100",
-        });
-      }
-    }
-
-    if (withholdingTax !== undefined) {
-      const withholdingTaxNum = parseFloat(withholdingTax);
-      if (isNaN(withholdingTaxNum) || withholdingTaxNum < 0 || withholdingTaxNum > 100) {
-        return res.status(400).json({
-          message: "Withholding tax must be a number between 0 and 100",
-        });
-      }
-    }
+      return num;
+    };
 
     const updateData = {
-      subcategoryName,
+      ...(subcategoryName && { subcategoryName: subcategoryName.trim() }),
       ...(hsCode && { hsCode: fullHsCode }),
-      ...(salesTax !== undefined && { salesTax: parseFloat(salesTax) }),
-      ...(customDuty !== undefined && { customDuty: parseFloat(customDuty) }),
-      ...(withholdingTax !== undefined && { withholdingTax: parseFloat(withholdingTax) }),
+      ...(salesTax !== undefined && { salesTax: numericCheck(salesTax, "Sales tax") }),
+      ...(customDuty !== undefined && { customDuty: numericCheck(customDuty, "Custom duty") }),
+      ...(withholdingTax !== undefined && { withholdingTax: numericCheck(withholdingTax, "Withholding tax") }),
       ...(unitOfMeasurement && { unitOfMeasurement }),
       exemptions: {
         spoNo: spoNo || "",
@@ -235,7 +258,9 @@ const updateSubcategory = async (req, res) => {
       updateData.imagePublicId = req.file.filename;
     }
 
-    const updatedSubcategory = await Subcategory.findByIdAndUpdate(id, updateData, { new: true }).populate("category");
+    const updatedSubcategory = await Subcategory.findByIdAndUpdate(id, updateData, {
+      new: true,
+    }).populate("category");
 
     res.status(200).json({
       message: "Subcategory updated successfully",
@@ -243,16 +268,19 @@ const updateSubcategory = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating subcategory:", error.message);
-
+    if (error.message.includes("must be a number")) {
+      return res.status(400).json({ message: error.message });
+    }
     if (error.code === 11000) {
       if (error.keyPattern.subcategoryName) {
-        return res.status(400).json({ message: "Subcategory name already exists" });
+        return res
+          .status(400)
+          .json({ message: "Subcategory name already exists" });
       }
       if (error.keyPattern.hsCode) {
         return res.status(400).json({ message: "HS code already exists" });
       }
     }
-
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -261,22 +289,20 @@ const updateSubcategory = async (req, res) => {
 const deleteSubcategory = async (req, res) => {
   try {
     const { id } = req.params;
-
     const subcategory = await Subcategory.findById(id);
     if (!subcategory) {
       return res.status(404).json({ message: "Subcategory not found" });
     }
 
-    // Delete image from Cloudinary if exists
     if (subcategory.imagePublicId) {
       await cloudinary.uploader.destroy(subcategory.imagePublicId);
     }
 
     await Subcategory.findByIdAndDelete(id);
 
-    res.status(200).json({ 
-      message: "Subcategory deleted successfully", 
-      subcategory 
+    res.status(200).json({
+      message: "Subcategory deleted successfully",
+      subcategory,
     });
   } catch (error) {
     console.error("Error deleting subcategory:", error.message);

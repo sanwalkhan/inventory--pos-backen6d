@@ -99,6 +99,9 @@ exports.resetPassword = async (req, res) => {
   if (!token || !password) {
     return res.status(400).json({ message: "Missing token or password" });
   }
+  if (password.length < 8) {
+    return res.status(400).json({ message: "Password must be at least 8 characters" });
+  }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_RESET_SECRET);

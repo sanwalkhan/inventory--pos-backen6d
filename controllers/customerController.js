@@ -9,20 +9,29 @@ const mongoose = require("mongoose");
 const customer = async (req, res) => {
   try {
     const { name, phone, latestOrder } = req.body;
-    console.log("latest order is", latestOrder);
+    console.log("📦 Received customer upsert request:", JSON.stringify(req.body, null, 2));
 
     // ✅ Validate required fields first
-    if (!name || !phone || !latestOrder || !Array.isArray(latestOrder.items) || latestOrder.items.length === 0) {
-      return res.status(400).json({ error: "Missing or invalid fields" });
+    if (!name || !phone || !latestOrder) {
+      console.error("❌ Missing required fields");
+      return res.status(400).json({ error: "Missing required fields: name, phone, or latestOrder" });
     }
 
-    // ✅ Extract cashier info safely from first item
-    const cashierId = latestOrder.items[0]?.userId || null;
-    let cashierName = "Unknown Cashier";
-    if (cashierId) {
+    if (!Array.isArray(latestOrder.items) || latestOrder.items.length === 0) {
+      console.error("❌ Invalid items array");
+      return res.status(400).json({ error: "latestOrder.items must be a non-empty array" });
+    }
+
+    // ✅ Extract cashier info safely from first item OR from latestOrder itself
+    const cashierId = latestOrder.cashierId || latestOrder.items[0]?.userId || null;
+    let cashierName = latestOrder.cashierName || "Unknown Cashier";
+    
+    if (cashierId && !latestOrder.cashierName) {
       const cashier = await Users.findById(cashierId).select("username");
       if (cashier) cashierName = cashier.username;
     }
+
+    console.log("👤 Cashier info:", { cashierId, cashierName });
 
     // ✅ Compute total price if not supplied
     const computedTotal = latestOrder.items.reduce(
@@ -30,43 +39,76 @@ const customer = async (req, res) => {
       0
     );
 
-    // ✅ Build purchase entry (do not rely on missing props)
+    const totalAmount = latestOrder.totalPrice || latestOrder.totalAmount || computedTotal;
+
+    console.log("💰 Order total:", totalAmount);
+
+    // ✅ Build purchase entry
     const purchaseEntry = {
       orderDate: latestOrder.orderDate || new Date(),
-      items: latestOrder.items,
+      items: latestOrder.items.map(item => ({
+        productId: item.productId,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        originalQuantity: item.originalQuantity || item.quantity
+      })),
       cashierId,
       cashierName,
       paymentMethod: latestOrder.paymentMethod || "cash",
-      totalAmount: latestOrder.totalPrice || computedTotal,
+      totalAmount: totalAmount,
     };
+
+    console.log("📝 Purchase entry:", JSON.stringify(purchaseEntry, null, 2));
 
     // ✅ Upsert customer
     let existingCustomer = await Customer.findOne({ phone });
 
     if (existingCustomer) {
+      console.log("✅ Existing customer found, updating...");
       existingCustomer.purchaseHistory.push(purchaseEntry);
       existingCustomer.purchaseCount += 1;
-      existingCustomer.totalSpent =
-        (existingCustomer.totalSpent || 0) + purchaseEntry.totalAmount;
+      existingCustomer.totalSpent = (existingCustomer.totalSpent || 0) + totalAmount;
       existingCustomer.lastPurchaseDate = purchaseEntry.orderDate;
       await existingCustomer.save();
+      
+      console.log("✅ Customer updated successfully");
       return res.json(existingCustomer);
     }
 
+    console.log("✅ Creating new customer...");
     const newCustomer = await Customer.create({
       name,
       phone,
       purchaseHistory: [purchaseEntry],
       purchaseCount: 1,
-      totalSpent: purchaseEntry.totalAmount,
+      totalSpent: totalAmount,
       lastPurchaseDate: purchaseEntry.orderDate,
       refundHistory: [],
     });
 
+    console.log("✅ New customer created successfully:", newCustomer._id);
     return res.json(newCustomer);
+    
   } catch (err) {
     console.error("🔥 Customer upsert error:", err);
-    res.status(500).json({ error: "Server error while upserting customer" });
+    console.error("Error stack:", err.stack);
+    
+    if (err.name === 'ValidationError') {
+      console.error("Validation errors:", err.errors);
+      return res.status(400).json({ 
+        error: "Validation failed", 
+        details: Object.keys(err.errors).map(key => ({
+          field: key,
+          message: err.errors[key].message
+        }))
+      });
+    }
+    
+    res.status(500).json({ 
+      error: "Server error while upserting customer",
+      message: err.message 
+    });
   }
 };
 
