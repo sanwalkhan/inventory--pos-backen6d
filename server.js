@@ -158,7 +158,7 @@ app.use("/api/chatbot", chatbotRouter);
 
 // Schedule: Run every day at 12 AM Pakistan time
 cron.schedule(
-  "0 0 * * *",
+  "0 0 * * *", // Run every minute
   async () => {
     console.log(
       "Running Daily Sales Report Job at",

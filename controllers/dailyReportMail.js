@@ -24,58 +24,112 @@ async function fetchTodaysOrders() {
   }).populate('items.productId');
 }
 
-// Aggregate sales data
-function aggregateSalesData(orders) {
-  const report = {};
+// Fetch all cashiers
+async function fetchAllCashiers() {
+  return User.find({ role: 'cashier' }).select('_id username').lean();
+}
 
-  orders.forEach(order => {
-    const cashierKey = `${order.cashierId}||${order.cashierName}`;
-    if (!report[cashierKey]) report[cashierKey] = {};
+// Aggregate sales data for a specific cashier
+function aggregateCashierSalesData(orders, cashierId) {
+  const report = {};
+  let totalRevenue = 0;
+  let totalOrders = 0;
+
+  const cashierOrders = orders.filter(order => order.cashierId.toString() === cashierId.toString());
+  
+  cashierOrders.forEach(order => {
+    totalOrders++;
+    totalRevenue += order.totalPrice || 0;
 
     order.items.forEach(item => {
       const pid = item.productId._id.toString();
-      if (!report[cashierKey][pid]) {
-        report[cashierKey][pid] = {
+      if (!report[pid]) {
+        report[pid] = {
           name: item.productId.name,
-          price: item.price,
+          price: item.price || item.sellingPrice,
           totalQuantity: 0,
           revenue: 0,
         };
       }
-      report[cashierKey][pid].totalQuantity += item.quantity;
-      report[cashierKey][pid].revenue += item.price * item.quantity;
+      report[pid].totalQuantity += item.quantity;
+      const itemPrice = item.price || item.sellingPrice;
+      report[pid].revenue += itemPrice * item.quantity;
     });
   });
 
-  return report;
+  return {
+    products: report,
+    totalRevenue,
+    totalOrders
+  };
 }
 
-// Generate HTML email
-function generateHTMLReport(reportData) {
-  let html = `<h2>Daily Product Selling Report - ${moment().tz('Asia/Karachi').format('YYYY-MM-DD')}</h2>`;
+// Generate HTML email for a single cashier
+function generateCashierHTMLReport(cashierName, cashierId, reportData, date) {
+  let html = `
+    <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
+      <h2 style="color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px;">
+        Daily Sales Report - ${date}
+      </h2>
+      
+      <div style="background-color: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px;">
+        <h3 style="color: #4CAF50; margin: 0 0 10px 0;">Cashier: ${cashierName}</h3>
+        <p style="margin: 5px 0;"><strong>Cashier ID:</strong> ${cashierId}</p>
+        <p style="margin: 5px 0;"><strong>Total Orders:</strong> ${reportData.totalOrders}</p>
+        <p style="margin: 5px 0;"><strong>Total Revenue:</strong> RS ${reportData.totalRevenue.toFixed(2)}</p>
+      </div>
+  `;
 
-  for (const [cashierKey, products] of Object.entries(reportData)) {
-    const [cashierId, cashierName] = cashierKey.split('||');
-    html += `<h3>Cashier: ${cashierName} (ID: ${cashierId})</h3>`;
-    html += `<table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse; width: 100%;">
-      <tr>
-        <th>Product</th>
-        <th>Price (RS)</th>
-        <th>Quantity Sold</th>
-        <th>Revenue (RS)</th>
-      </tr>`;
+  if (reportData.totalOrders === 0) {
+    html += `
+      <div style="background-color: #fff3cd; padding: 15px; margin: 20px 0; border-left: 4px solid #ffc107; border-radius: 5px;">
+        <p style="margin: 0; color: #856404;">
+          <strong>⚠️ No orders were placed by this cashier today.</strong>
+        </p>
+      </div>
+    `;
+  } else {
+    html += `
+      <h3 style="color: #333; margin-top: 30px;">Product Sales Details</h3>
+      <table border="1" cellpadding="10" cellspacing="0" style="border-collapse: collapse; width: 100%; margin-top: 15px;">
+        <thead>
+          <tr style="background-color: #4CAF50; color: white;">
+            <th style="text-align: left;">Product</th>
+            <th style="text-align: right;">Price (RS)</th>
+            <th style="text-align: center;">Quantity Sold</th>
+            <th style="text-align: right;">Revenue (RS)</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
 
-    Object.values(products).forEach(product => {
-      html += `<tr>
-        <td>${product.name}</td>
-        <td>${product.price.toFixed(2)}</td>
-        <td>${product.totalQuantity}</td>
-        <td>${product.revenue.toFixed(2)}</td>
-      </tr>`;
+    const products = Object.values(reportData.products);
+    products.forEach((product, index) => {
+      const bgColor = index % 2 === 0 ? '#ffffff' : '#f9f9f9';
+      html += `
+        <tr style="background-color: ${bgColor};">
+          <td style="padding: 8px;">${product.name}</td>
+          <td style="text-align: right; padding: 8px;">${product.price.toFixed(2)}</td>
+          <td style="text-align: center; padding: 8px;">${product.totalQuantity}</td>
+          <td style="text-align: right; padding: 8px; font-weight: bold;">${product.revenue.toFixed(2)}</td>
+        </tr>
+      `;
     });
 
-    html += `</table><br/>`;
+    html += `
+        </tbody>
+      </table>
+    `;
   }
+
+  html += `
+      <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px;">
+        <p>This is an automated report generated by the POS System.</p>
+        <p>Report generated on: ${moment().tz('Asia/Karachi').format('YYYY-MM-DD HH:mm:ss')} (Pakistan Time)</p>
+      </div>
+    </div>
+  `;
+
   return html;
 }
 
@@ -85,38 +139,111 @@ async function fetchAdminEmails() {
   return admins.map(a => a.email).filter(Boolean);
 }
 
-// Main function (can be used by both API & cron)
+// Main function - sends separate email for each cashier
 async function sendDailySalesReportEmail() {
   try {
-    const orders = await fetchTodaysOrders();
-    if (orders.length === 0) {
-      console.log('No orders found for today. Skipping email.');
-      return { success: false, message: 'No orders today.' };
-    }
-
-    const reportData = aggregateSalesData(orders);
-    const htmlReport = generateHTMLReport(reportData);
-    const adminEmails = await fetchAdminEmails();
+    const currentDate = moment().tz('Asia/Karachi').format('YYYY-MM-DD');
+    
+    // Fetch all necessary data
+    const [orders, cashiers, adminEmails] = await Promise.all([
+      fetchTodaysOrders(),
+      fetchAllCashiers(),
+      fetchAdminEmails()
+    ]);
 
     if (adminEmails.length === 0) {
       console.log('No admin emails found.');
       return { success: false, message: 'No admin emails found.' };
     }
 
-    const mailOptions = {
-      from: '"Sales Report" <shahshahzaibkazmi@gmail.com>',
-      to: adminEmails.join(','),
-      subject: `Daily Sales Report - ${moment().tz('Asia/Karachi').format('YYYY-MM-DD')}`,
-      html: htmlReport,
+    if (cashiers.length === 0) {
+      console.log('No cashiers found in the system.');
+      return { success: false, message: 'No cashiers found.' };
+    }
+
+    console.log(`Preparing reports for ${cashiers.length} cashiers to ${adminEmails.length} admins`);
+
+    // Send emails with delay to avoid rate limiting
+    const results = [];
+    const DELAY_BETWEEN_EMAILS = 2000; // 2 seconds delay between each email
+    
+    for (const cashier of cashiers) {
+      const reportData = aggregateCashierSalesData(orders, cashier._id);
+      const htmlReport = generateCashierHTMLReport(
+        cashier.username, 
+        cashier._id, 
+        reportData, 
+        currentDate
+      );
+
+      // Send individual email to each admin with delay
+      for (const adminEmail of adminEmails) {
+        try {
+          const mailOptions = {
+            from: '"POS Sales Report" <shahshahzaibkazmi@gmail.com>',
+            to: adminEmail, // Send to individual admin only
+            subject: `Daily Sales Report - ${cashier.username} - ${currentDate}`,
+            html: htmlReport,
+          };
+
+          await transporter.sendMail(mailOptions);
+          console.log(`✓ Report sent for cashier: ${cashier.username} to ${adminEmail} (Orders: ${reportData.totalOrders}, Revenue: RS ${reportData.totalRevenue.toFixed(2)})`);
+          
+          results.push({
+            cashier: cashier.username,
+            admin: adminEmail,
+            success: true,
+            orders: reportData.totalOrders,
+            revenue: reportData.totalRevenue
+          });
+
+          // Wait before sending next email to avoid rate limit
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_EMAILS));
+          
+        } catch (error) {
+          console.error(`✗ Error sending report for cashier ${cashier.username} to ${adminEmail}:`, error.message);
+          results.push({
+            cashier: cashier.username,
+            admin: adminEmail,
+            success: false,
+            error: error.message
+          });
+          
+          // Still wait even on error to avoid cascading rate limit issues
+          await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_EMAILS));
+        }
+      }
+    }
+
+     results = await Promise.all(emailPromises);
+    
+    results = await Promise.all(emailPromises);
+    
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+    const totalEmailsSent = cashiers.length * adminEmails.length;
+
+    console.log(`Daily sales reports sent: ${successCount} successful, ${failCount} failed out of ${totalEmailsSent} total emails`);
+
+    return {
+      success: true,
+      message: `Sent ${cashiers.length} cashier reports to ${adminEmails.length} admins (${totalEmailsSent} total emails)`,
+      details: {
+        totalCashiers: cashiers.length,
+        totalAdmins: adminEmails.length,
+        totalEmailsSent: totalEmailsSent,
+        successfulEmails: successCount,
+        failedEmails: failCount,
+        results: results
+      }
     };
-
-    await transporter.sendMail(mailOptions);
-    console.log('Daily sales report email sent to admins.');
-
-    return { success: true, message: 'Daily sales report email sent successfully.' };
   } catch (error) {
-    console.error('Error sending daily sales report email:', error);
-    return { success: false, message: 'Failed to send daily sales report email.' };
+    console.error('Error sending daily sales report emails:', error);
+    return { 
+      success: false, 
+      message: 'Failed to send daily sales report emails.',
+      error: error.message 
+    };
   }
 }
 
