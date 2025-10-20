@@ -8,7 +8,7 @@ const categoryController = async (req, res) => {
     const { categoryName, hsCode } = req.body;
 
     // Required fields
-    if (!categoryName || !hsCode || !req.file) {
+    if (!categoryName || !hsCode) {
       return res.status(400).json({
         message: "Category name, HS code, and image are required",
       });

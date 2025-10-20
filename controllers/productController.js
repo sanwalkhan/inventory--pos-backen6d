@@ -124,6 +124,7 @@ const addProduct = async (req, res) => {
       marginPercent = 0,
       discount = 0,
     } = req.body;
+    console.log("incoming body", req.body);
 
     if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId || !req.file) {
       return res.status(400).json({ message: "All fields including image are required" });
