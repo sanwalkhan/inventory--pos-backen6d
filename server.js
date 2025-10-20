@@ -188,7 +188,7 @@ process.on("SIGINT", () => {
 });
 
 // --- Start Server ---
-server.listen(port, "0.0.0.0", () => {
+server.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
   console.log(`🌐 Allowed Origin: ${allowedOrigins}`);
   console.log("🔌 Socket.IO server running with real-time notifications");
