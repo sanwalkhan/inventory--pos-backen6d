@@ -6,11 +6,13 @@ require("dotenv").config();
 require("./models/dbConnection");
 const http = require("http");
 const { Server } = require("socket.io");
-const {PeerServer} = require('peer');
+const { ExpressPeerServer } = require("peer");
 const Currency = require("./models/currancyModel");
 
-const allowedOrigins =process.env.FRONTEND_URL;
+// Allowed frontend origin from .env
+const allowedOrigins = "*";
 
+// Initialize default currency if not exists
 (async () => {
   const count = await Currency.countDocuments();
   if (count === 0) {
@@ -19,18 +21,77 @@ const allowedOrigins =process.env.FRONTEND_URL;
   }
 })();
 
-const peerServer = PeerServer({
-  port: 9000,
-  path: '/peerjs',
-  allow_discovery: true,
-  debug: true,
-  corsOptions: {
-    origin:  allowedOrigins,
-    credentials: true
-  }
+// Initialize Express
+const app = express();
+const port = process.env.PORT || 8080;
+
+// Create HTTP server
+const server = http.createServer(app);
+
+// --- Socket.IO Setup ---
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 });
 
-// Import Routes
+// Store connected users for notifications
+const connectedUsers = new Map();
+
+io.on("connection", (socket) => {
+  console.log("A client connected:", socket.id);
+
+  socket.on("authenticate", (data) => {
+    if (data.userId) {
+      socket.join(`user_${data.userId}`);
+      connectedUsers.set(socket.id, data.userId);
+      console.log(`User ${data.userId} joined room user_${data.userId}`);
+    }
+  });
+
+  socket.on("ping", (msg) => {
+    console.log("Ping received:", msg);
+    socket.emit("pong", "Hello from server!");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+    const userId = connectedUsers.get(socket.id);
+    if (userId) connectedUsers.delete(socket.id);
+  });
+});
+
+// Make io available to routes
+app.locals.io = io;
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
+// --- Middleware ---
+app.use(bodyParser.json());
+
+// CORS
+app.use(
+  cors({
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+    credentials: true,
+  })
+);
+
+// --- Health Check Endpoint ---
+app.get("/", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date(),
+    message: "Server is running",
+  });
+});
+
+// --- Routes Imports ---
 const authRouter = require("./routes/authRoutes");
 const adminRouter = require("./routes/adminRoutes");
 const userRouter = require("./routes/userRoutes");
@@ -58,78 +119,8 @@ const currencyRouter = require("./routes/currencyRoutes");
 const NotificationRouter = require("./routes/notificationRoutes");
 const chatbotRouter = require("./routes/chatbotRoutes");
 
-
-
-
-
-const app = express();
-const port = process.env.PORT;
-
- 
-
-
-// --- WebSocket Setup ---
-const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-});
-
-// Store connected users for targeted notifications
-const connectedUsers = new Map();
-
-io.on("connection", (socket) => {
-  console.log("A client connected:", socket.id);
-
-  // Handle user authentication and room joining
-  socket.on('authenticate', (data) => {
-    if (data.userId) {
-      socket.join(`user_${data.userId}`);
-      connectedUsers.set(socket.id, data.userId);
-      console.log(`User ${data.userId} joined room user_${data.userId}`);
-    }
-  });
-
-  // Handle ping-pong for connection testing
-  socket.on("ping", (msg) => {
-    console.log("Ping received:", msg);
-    socket.emit("pong", "Hello from server!");
-  });
-
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
-    // Remove from connected users
-    const userId = connectedUsers.get(socket.id);
-    if (userId) {
-      connectedUsers.delete(socket.id);
-      console.log(`User ${userId} disconnected`);
-    }
-  });
-});
-
-// Make io instance available to routes
-app.locals.io = io;
-
-// Middleware to attach io to request object for controllers
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
-
-// Middleware
-app.use(bodyParser.json());
-
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-}));
-
-// Routes - Make sure NotificationRouter is before other routes that might create notifications
-app.use('/api', NotificationRouter);
+// --- Register Routes ---
+app.use("/api", NotificationRouter);
 app.use("/api", authRouter);
 app.use("/api", adminRouter);
 app.use("/api", userRouter);
@@ -155,10 +146,27 @@ app.use("/api", resetPasswordRouter);
 app.use("/api", currencyRouter);
 app.use("/api/chatbot", chatbotRouter);
 
+// --- PeerJS integrated on same port ---
+const peerServer = ExpressPeerServer(server, {
+  path: "/peerjs",
+  allow_discovery: true,
+});
+app.use("/peerjs", peerServer);
 
-// Schedule: Run every day at 12 AM Pakistan time
+// PeerJS events
+peerServer.on("connection", (client) =>
+  console.log("PeerJS client connected:", client.getId())
+);
+peerServer.on("disconnect", (client) =>
+  console.log("PeerJS client disconnected:", client.getId())
+);
+peerServer.on("error", (error) =>
+  console.error("PeerJS server error:", error)
+);
+
+// --- Cron Job: Daily Sales Report ---
 cron.schedule(
-  "0 0 * * *", // Run every minute
+  "0 0 * * *",
   async () => {
     console.log(
       "Running Daily Sales Report Job at",
@@ -166,41 +174,23 @@ cron.schedule(
     );
     await sendDailySalesReportEmail();
   },
-  {
-    timezone: "Asia/Karachi",
-  }
+  { timezone: "Asia/Karachi" }
 );
 
-// PeerJS Server events
-peerServer.on('connection', (client) => {
-  console.log('PeerJS client connected:', client.getId());
-});
-
-peerServer.on('disconnect', (client) => {
-  console.log('PeerJS client disconnected:', client.getId());
-});
-
-peerServer.on('error', (error) => {
-  console.error('PeerJS server error:', error);
-});
-
-console.log('PeerJS server running on port 9000');
-console.log('WebSocket endpoint: ws://localhost:9000/peerjs');
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\nShutting down servers...');
-  io.close(() => {
-    console.log('Socket.IO server closed');
-  });
+// --- Graceful Shutdown ---
+process.on("SIGINT", () => {
+  console.log("\nShutting down servers...");
+  io.close(() => console.log("Socket.IO server closed"));
   server.close(() => {
-    console.log('HTTP server closed');
+    console.log("HTTP server closed");
     process.exit(0);
   });
 });
 
-// Start Server with WebSocket
+// --- Start Server ---
 server.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
-  console.log('Socket.IO server running with real-time notifications');
+  console.log(`✅ Server running on port ${port}`);
+  console.log(`🌐 Allowed Origin: ${allowedOrigins}`);
+  console.log("🔌 Socket.IO server running with real-time notifications");
+  console.log("🩺 Health Check: GET /");
 });
