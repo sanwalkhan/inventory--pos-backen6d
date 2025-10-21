@@ -1,27 +1,26 @@
-const express = require("express");
-const categoryRouter = express.Router();
-const upload = require("../config/categoryCloudinary");
+const express = require("express")
+const categoryRouter = express.Router()
+const upload = require("../config/categoryCloudinary")
 const {
   categoryController,
   getAllCategories,
   updateCategory,
   deleteCategory,
   getSubcategoriesByCategory,
-} = require("../controllers/categoryController");
+} = require("../controllers/categoryController")
 
-// POST category with image upload
-categoryRouter.post("/category", upload.single("image"), categoryController);
+// Accepts either multipart/form-data with image file or application/json with imageUrl
+categoryRouter.post("/category", upload.single("image"), categoryController)
 
 // GET all categories
-categoryRouter.get("/categories", getAllCategories);
+categoryRouter.get("/categories", getAllCategories)
 
-// PUT update category with optional new image upload
-categoryRouter.put("/category/:id", upload.single("image"), updateCategory);
+categoryRouter.put("/category/:id", upload.single("image"), updateCategory)
 
 // DELETE category
-categoryRouter.delete("/category/:id", deleteCategory);
+categoryRouter.delete("/category/:id", deleteCategory)
 
 // GET subcategories by category
-categoryRouter.get("/subcategories/category/:categoryId", getSubcategoriesByCategory);
+categoryRouter.get("/subcategories/category/:categoryId", getSubcategoriesByCategory)
 
-module.exports = categoryRouter;
+module.exports = categoryRouter

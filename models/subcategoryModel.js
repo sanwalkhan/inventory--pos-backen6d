@@ -1,89 +1,118 @@
-const mongoose = require("mongoose");
+const mongoose = require("mongoose")
 
 const subcategorySchema = new mongoose.Schema(
   {
-    subcategoryName: { 
-      type: String, 
-      required: true, 
-      unique: true, 
-      trim: true 
+    subcategoryName: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
     },
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",
       required: true,
     },
-    hsCode: { 
-      type: String, 
-      required: true, 
-      unique: true, 
-      match: [/^\d{4}\.\d{4}$/, 'HS Code must be in format XXXX.XXXX (8 digits total)'],
-      trim: true 
+    hsCode: {
+      type: String,
+      required: true,
+      unique: true,
+      match: [/^\d{4}\.\d{4}$/, "HS Code must be in format XXXX.XXXX (8 digits total)"],
+      trim: true,
     },
     salesTax: {
       type: Number,
       required: true,
       min: 0,
       max: 100,
-      default: 0
+      default: 0,
     },
     customDuty: {
       type: Number,
       required: true,
       min: 0,
       max: 100,
-      default: 0
+      default: 0,
     },
     withholdingTax: {
       type: Number,
       required: true,
       min: 0,
       max: 100,
-      default: 0
+      default: 0,
     },
     exemptions: {
-      spoNo: { 
-        type: String, 
-        trim: true, 
-        default: '' 
+      spoNo: {
+        type: String,
+        trim: true,
+        default: "",
       },
-      scheduleNo: { 
-        type: String, 
-        trim: true, 
-        default: '' 
+      scheduleNo: {
+        type: String,
+        trim: true,
+        default: "",
       },
-      itemNo: { 
-        type: String, 
-        trim: true, 
-        default: '' 
-      }
+      itemNo: {
+        type: String,
+        trim: true,
+        default: "",
+      },
     },
     unitOfMeasurement: {
       type: String,
       required: true,
       enum: [
-        'kg', 'g', 'ton', 'lb', 'oz', // Weight
-        'liter', 'ml', 'gallon', 'quart', // Volume
-        'meter', 'cm', 'mm', 'inch', 'ft', 'yard', // Length
-        'sqm', 'sqft', 'sqcm', // Area
-        'piece', 'dozen', 'pair', 'set', // Count
-        'box', 'pack', 'carton', 'bundle', // Package
-        'hour', 'day', 'month', 'year', // Time
-        'kwh', 'mwh', // Energy
-        'other'
+        "kg",
+        "g",
+        "ton",
+        "lb",
+        "oz",
+        "liter",
+        "ml",
+        "gallon",
+        "quart",
+        "meter",
+        "cm",
+        "mm",
+        "inch",
+        "ft",
+        "yard",
+        "sqm",
+        "sqft",
+        "sqcm",
+        "piece",
+        "dozen",
+        "pair",
+        "set",
+        "box",
+        "pack",
+        "carton",
+        "bundle",
+        "hour",
+        "day",
+        "month",
+        "year",
+        "kwh",
+        "mwh",
+        "other",
       ],
-      default: 'piece'
+      default: "piece",
     },
-    image: { 
-      type: String 
-    }, // Cloudinary image URL
-    imagePublicId: { 
-      type: String 
-    }, // Cloudinary public_id for deletion
+    image: {
+      type: String,
+    },
+    imageSource: {
+      type: String,
+      enum: ["file", "url"],
+      default: "file",
+    },
+    imagePublicId: {
+      type: String,
+    },
   },
-  { timestamps: true }
-);
+  { timestamps: true },
+)
 
-const Subcategory = mongoose.model("Subcategory", subcategorySchema);
+const Subcategory = mongoose.model("Subcategory", subcategorySchema)
 
-module.exports = { Subcategory };
+module.exports = { Subcategory }

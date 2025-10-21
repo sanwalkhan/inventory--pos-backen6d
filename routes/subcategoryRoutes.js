@@ -1,18 +1,27 @@
-const express = require("express");
-const subcategoryRouter = express.Router();
-const upload = require("../config/subcategoryCloudinary");
+const express = require("express")
+const subcategoryRouter = express.Router()
+const upload = require("../config/subcategoryCloudinary")
 const {
   addSubcategory,
   getSubcategories,
   getSubcategoriesByCategory,
   deleteSubcategory,
   updateSubcategory,
-} = require("../controllers/subcategoryController");
+} = require("../controllers/subcategoryController")
 
-subcategoryRouter.get("/subcategories", getSubcategories);
-subcategoryRouter.get("/subcategories/category/:categoryId", getSubcategoriesByCategory);
-subcategoryRouter.post("/category/:id/subcategories", upload.single("image"), addSubcategory);
-subcategoryRouter.put("/subcategory/:id", upload.single("image"), updateSubcategory);
-subcategoryRouter.delete("/subcategory/:id", deleteSubcategory);
+// GET all subcategories
+subcategoryRouter.get("/subcategories", getSubcategories)
 
-module.exports = subcategoryRouter;
+// GET subcategories by category
+subcategoryRouter.get("/subcategories/category/:categoryId", getSubcategoriesByCategory)
+
+// For file upload: use multipart/form-data with image file
+// For URL: use application/json with imageUrl field
+subcategoryRouter.post("/category/:id/subcategories", upload.single("image"), addSubcategory)
+
+subcategoryRouter.put("/subcategory/:id", upload.single("image"), updateSubcategory)
+
+// DELETE subcategory
+subcategoryRouter.delete("/subcategory/:id", deleteSubcategory)
+
+module.exports = subcategoryRouter
