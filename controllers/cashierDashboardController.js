@@ -1,9 +1,11 @@
 const { Products } = require("../models/productModel");
 const { Order } = require("../models/orderModel");
 const CashierSession = require('../models/cashierModel');
+const {getOrganizationId} = require('../middleware/authmiddleware');
 
 // Get quick stats for cashier dashboard
 exports.getCashierStats = async (req, res) => {
+  const organizationId = getOrganizationId(req);
   try {
     const cashierId = req.params.cashierId;
     const today = new Date();

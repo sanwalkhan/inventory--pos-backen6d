@@ -6,6 +6,7 @@ const { Customer } = require("../models/customerModel");
 const Supplier = require("../models/supplierModel");
 const Users = require("../models/userModel");
 const CashierDailySession = require("../models/cashierModel");
+const { getOrganizationId } = require("../middleware/authmiddleware");
 
 const trainedResponses = {
   greetings: [
@@ -28,26 +29,26 @@ const trainedResponses = {
   tax: ["tax", "hs code", "duty", "withholding"],
 };
 
-const getContextualResponse = async (message, userId) => {
+const getContextualResponse = async (message, userId, organizationId) => {
   const lowerMessage = message.toLowerCase();
 
   if (trainedResponses.greetings.some((word) => lowerMessage.includes(word))) {
     return {
-      text: "Hello! Welcome to your POS AI Assistant. I can help you with:\n\n• 📦 Products & Inventory Management\n• 💰 Sales & Orders Analysis\n• 👥 Customer Information\n• 📊 Reports & Analytics\n• 🏢 Supplier Management\n• 👤 User Management\n• 💳 Tax & HS Code Information\n\nWhat would you like to explore today?",
+      text: "Hello! Welcome to your POS AI Assistant. I can help you with:\n\n• Products & Inventory Management\n• Sales & Orders Analysis\n• Customer Information\n• Reports & Analytics\n• Supplier Management\n• User Management\n• Tax & HS Code Information\n\nWhat would you like to explore today?",
       type: "greeting",
     };
   }
 
   if (trainedResponses.farewell.some((word) => lowerMessage.includes(word))) {
     return {
-      text: "Thank you for using the POS AI Assistant! Have a great day! Feel free to return anytime you need help. 👋",
+      text: "Thank you for using the POS AI Assistant! Have a great day! Feel free to return anytime you need help.",
       type: "farewell",
     };
   }
 
   if (trainedResponses.help.some((word) => lowerMessage.includes(word))) {
     return {
-      text: "I'm your intelligent POS assistant! Here's what I can do:\n\n📦 **Products & Inventory**\n   • Check product details\n   • View stock levels\n   • Search by barcode or name\n   • Track low stock items\n\n💰 **Sales & Orders**\n   • View recent orders\n   • Sales statistics\n   • Revenue analysis\n   • Payment methods breakdown\n\n👥 **Customers**\n   • Customer information\n   • Purchase history\n   • Top customers\n   • Loyalty insights\n\n📊 **Reports & Analytics**\n   • Sales trends\n   • Product performance\n   • Tax breakdowns\n   • Revenue metrics\n\n🏢 **Suppliers**\n   • Supplier information\n   • Orders & dues\n   • Inventory received\n\n💳 **Tax & HS Codes**\n   • HS code information\n   • Tax calculations\n   • Duty & exemptions\n\nJust ask me anything!",
+      text: "I'm your intelligent POS assistant! Here's what I can do:\n\nProducts & Inventory\n   • Check product details\n   • View stock levels\n   • Search by barcode or name\n   • Track low stock items\n\nSales & Orders\n   • View recent orders\n   • Sales statistics\n   • Revenue analysis\n   • Payment methods breakdown\n\nCustomers\n   • Customer information\n   • Purchase history\n   • Top customers\n   • Loyalty insights\n\nReports & Analytics\n   • Sales trends\n   • Product performance\n   • Tax breakdowns\n   • Revenue metrics\n\nSuppliers\n   • Supplier information\n   • Orders & dues\n   • Inventory received\n\nTax & HS Codes\n   • HS code information\n   • Tax calculations\n   • Duty & exemptions\n\nJust ask me anything!",
       type: "help",
     };
   }
@@ -57,27 +58,33 @@ const getContextualResponse = async (message, userId) => {
     lowerMessage.includes("how many products")
   ) {
     try {
-      const totalProducts = await Products.countDocuments();
-      const lowStock = await Products.countDocuments({ quantity: { $lt: 10 } });
-      const outOfStock = await Products.countDocuments({ quantity: 0 });
-      const recentProducts = await Products.find()
+      const totalProducts = await Products.countDocuments({ organizationId });
+      const lowStock = await Products.countDocuments({ 
+        organizationId, 
+        quantity: { $lt: 10 } 
+      });
+      const outOfStock = await Products.countDocuments({ 
+        organizationId, 
+        quantity: 0 
+      });
+      const recentProducts = await Products.find({ organizationId })
         .sort({ createdAt: -1 })
         .limit(5)
         .select("name quantity price");
 
-      let response = `📦 **Product Inventory Summary**\n\n`;
-      response += `• Total Products: **${totalProducts}**\n`;
-      response += `• Low Stock Items: **${lowStock}** (qty < 10)\n`;
-      response += `• Out of Stock: **${outOfStock}**\n\n`;
+      let response = `Product Inventory Summary\n\n`;
+      response += `• Total Products: ${totalProducts}\n`;
+      response += `• Low Stock Items: ${lowStock} (qty < 10)\n`;
+      response += `• Out of Stock: ${outOfStock}\n\n`;
 
       if (recentProducts.length > 0) {
-        response += `🆕 **Recently Added Products:**\n`;
+        response += `Recently Added Products:\n`;
         recentProducts.forEach((product, index) => {
           response += `${index + 1}. ${product.name} - Qty: ${product.quantity}, Price: Rs ${product.price}\n`;
         });
       }
 
-      response += `\n💡 You can ask me about:\n• Specific product details\n• Low stock alerts\n• Product categories\n• Price information`;
+      response += `\nYou can ask me about:\n• Specific product details\n• Low stock alerts\n• Product categories\n• Price information`;
 
       return { text: response, type: "products", data: { totalProducts, lowStock, outOfStock } };
     } catch (error) {
@@ -93,34 +100,37 @@ const getContextualResponse = async (message, userId) => {
     lowerMessage.includes("sales")
   ) {
     try {
-      const totalOrders = await Order.countDocuments();
+      const totalOrders = await Order.countDocuments({ organizationId });
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const todayOrders = await Order.countDocuments({ date: { $gte: today } });
+      const todayOrders = await Order.countDocuments({ 
+        organizationId, 
+        date: { $gte: today } 
+      });
       const todaySales = await Order.aggregate([
-        { $match: { date: { $gte: today } } },
+        { $match: { organizationId, date: { $gte: today } } },
         { $group: { _id: null, total: { $sum: "$totalPrice" } } },
       ]);
 
-      const recentOrders = await Order.find()
+      const recentOrders = await Order.find({ organizationId })
         .sort({ date: -1 })
         .limit(5)
         .select("userName totalPrice paymentMethod date");
 
-      let response = `💰 **Sales & Orders Summary**\n\n`;
-      response += `• Total Orders: **${totalOrders}**\n`;
-      response += `• Today's Orders: **${todayOrders}**\n`;
-      response += `• Today's Revenue: **Rs ${todaySales[0]?.total || 0}**\n\n`;
+      let response = `Sales & Orders Summary\n\n`;
+      response += `• Total Orders: ${totalOrders}\n`;
+      response += `• Today's Orders: ${todayOrders}\n`;
+      response += `• Today's Revenue: Rs ${todaySales[0]?.total || 0}\n\n`;
 
       if (recentOrders.length > 0) {
-        response += `🛒 **Recent Orders:**\n`;
+        response += `Recent Orders:\n`;
         recentOrders.forEach((order, index) => {
           response += `${index + 1}. ${order.userName} - Rs ${order.totalPrice} (${order.paymentMethod})\n`;
         });
       }
 
-      response += `\n💡 Ask me about:\n• Daily/weekly/monthly sales\n• Payment method breakdown\n• Top selling products\n• Revenue analytics`;
+      response += `\nAsk me about:\n• Daily/weekly/monthly sales\n• Payment method breakdown\n• Top selling products\n• Revenue analytics`;
 
       return { text: response, type: "orders", data: { totalOrders, todayOrders, todaySales: todaySales[0]?.total || 0 } };
     } catch (error) {
@@ -133,23 +143,23 @@ const getContextualResponse = async (message, userId) => {
 
   if (trainedResponses.customers.some((word) => lowerMessage.includes(word))) {
     try {
-      const totalCustomers = await Customer.countDocuments();
-      const topCustomers = await Customer.find()
+      const totalCustomers = await Customer.countDocuments({ organizationId });
+      const topCustomers = await Customer.find({ organizationId })
         .sort({ totalSpent: -1 })
         .limit(5)
         .select("name phone totalSpent purchaseCount");
 
-      let response = `👥 **Customer Analytics**\n\n`;
-      response += `• Total Customers: **${totalCustomers}**\n\n`;
+      let response = `Customer Analytics\n\n`;
+      response += `• Total Customers: ${totalCustomers}\n\n`;
 
       if (topCustomers.length > 0) {
-        response += `⭐ **Top Customers:**\n`;
+        response += `Top Customers:\n`;
         topCustomers.forEach((customer, index) => {
           response += `${index + 1}. ${customer.name} - Rs ${customer.totalSpent} (${customer.purchaseCount} orders)\n`;
         });
       }
 
-      response += `\n💡 I can help you:\n• Find customer purchase history\n• View customer details\n• Track loyal customers\n• Analyze buying patterns`;
+      response += `\nI can help you:\n• Find customer purchase history\n• View customer details\n• Track loyal customers\n• Analyze buying patterns`;
 
       return { text: response, type: "customers", data: { totalCustomers } };
     } catch (error) {
@@ -162,30 +172,34 @@ const getContextualResponse = async (message, userId) => {
 
   if (trainedResponses.suppliers.some((word) => lowerMessage.includes(word))) {
     try {
-      const totalSuppliers = await Supplier.countDocuments();
-      const activeSuppliers = await Supplier.countDocuments({ isActive: true });
+      const totalSuppliers = await Supplier.countDocuments({ organizationId });
+      const activeSuppliers = await Supplier.countDocuments({ 
+        organizationId, 
+        isActive: true 
+      });
       const totalDues = await Supplier.aggregate([
+        { $match: { organizationId } },
         { $group: { _id: null, total: { $sum: "$totalDues" } } },
       ]);
 
-      const recentSuppliers = await Supplier.find()
+      const recentSuppliers = await Supplier.find({ organizationId })
         .sort({ createdAt: -1 })
         .limit(5)
         .select("name email totalDues totalOrders");
 
-      let response = `🏢 **Supplier Management**\n\n`;
-      response += `• Total Suppliers: **${totalSuppliers}**\n`;
-      response += `• Active Suppliers: **${activeSuppliers}**\n`;
-      response += `• Total Outstanding Dues: **Rs ${totalDues[0]?.total || 0}**\n\n`;
+      let response = `Supplier Management\n\n`;
+      response += `• Total Suppliers: ${totalSuppliers}\n`;
+      response += `• Active Suppliers: ${activeSuppliers}\n`;
+      response += `• Total Outstanding Dues: Rs ${totalDues[0]?.total || 0}\n\n`;
 
       if (recentSuppliers.length > 0) {
-        response += `📋 **Recent Suppliers:**\n`;
+        response += `Recent Suppliers:\n`;
         recentSuppliers.forEach((supplier, index) => {
           response += `${index + 1}. ${supplier.name} - ${supplier.totalOrders} orders, Dues: Rs ${supplier.totalDues}\n`;
         });
       }
 
-      response += `\n💡 Ask me about:\n• Supplier details\n• Outstanding payments\n• Supplier orders\n• Inventory received`;
+      response += `\nAsk me about:\n• Supplier details\n• Outstanding payments\n• Supplier orders\n• Inventory received`;
 
       return { text: response, type: "suppliers", data: { totalSuppliers, activeSuppliers } };
     } catch (error) {
@@ -198,22 +212,22 @@ const getContextualResponse = async (message, userId) => {
 
   if (trainedResponses.categories.some((word) => lowerMessage.includes(word))) {
     try {
-      const totalCategories = await Category.countDocuments();
-      const totalSubcategories = await Subcategory.countDocuments();
-      const categories = await Category.find().select("categoryName");
+      const totalCategories = await Category.countDocuments({ organizationId });
+      const totalSubcategories = await Subcategory.countDocuments({ organizationId });
+      const categories = await Category.find({ organizationId }).select("categoryName");
 
-      let response = `📂 **Category Overview**\n\n`;
-      response += `• Total Categories: **${totalCategories}**\n`;
-      response += `• Total Subcategories: **${totalSubcategories}**\n\n`;
+      let response = `Category Overview\n\n`;
+      response += `• Total Categories: ${totalCategories}\n`;
+      response += `• Total Subcategories: ${totalSubcategories}\n\n`;
 
       if (categories.length > 0) {
-        response += `📑 **Available Categories:**\n`;
+        response += `Available Categories:\n`;
         categories.forEach((cat, index) => {
           response += `${index + 1}. ${cat.categoryName}\n`;
         });
       }
 
-      response += `\n💡 I can help with:\n• Category management\n• Subcategory information\n• Products by category\n• HS code by category`;
+      response += `\nI can help with:\n• Category management\n• Subcategory information\n• Products by category\n• HS code by category`;
 
       return { text: response, type: "categories", data: { totalCategories, totalSubcategories } };
     } catch (error) {
@@ -230,7 +244,7 @@ const getContextualResponse = async (message, userId) => {
       today.setHours(0, 0, 0, 0);
 
       const todaySales = await Order.aggregate([
-        { $match: { date: { $gte: today } } },
+        { $match: { organizationId, date: { $gte: today } } },
         {
           $group: {
             _id: null,
@@ -242,7 +256,7 @@ const getContextualResponse = async (message, userId) => {
       ]);
 
       const paymentBreakdown = await Order.aggregate([
-        { $match: { date: { $gte: today } } },
+        { $match: { organizationId, date: { $gte: today } } },
         {
           $group: {
             _id: "$paymentMethod",
@@ -252,23 +266,23 @@ const getContextualResponse = async (message, userId) => {
         },
       ]);
 
-      let response = `📊 **Today's Report Summary**\n\n`;
+      let response = `Today's Report Summary\n\n`;
 
       if (todaySales.length > 0) {
-        response += `💰 **Revenue Metrics:**\n`;
-        response += `• Total Revenue: **Rs ${todaySales[0].totalRevenue}**\n`;
-        response += `• Total Orders: **${todaySales[0].totalOrders}**\n`;
-        response += `• Total Tax Collected: **Rs ${todaySales[0].totalTax}**\n\n`;
+        response += `Revenue Metrics:\n`;
+        response += `• Total Revenue: Rs ${todaySales[0].totalRevenue}\n`;
+        response += `• Total Orders: ${todaySales[0].totalOrders}\n`;
+        response += `• Total Tax Collected: Rs ${todaySales[0].totalTax}\n\n`;
       }
 
       if (paymentBreakdown.length > 0) {
-        response += `💳 **Payment Method Breakdown:**\n`;
+        response += `Payment Method Breakdown:\n`;
         paymentBreakdown.forEach((payment) => {
           response += `• ${payment._id}: ${payment.count} orders, Rs ${payment.total}\n`;
         });
       }
 
-      response += `\n💡 Available Reports:\n• Daily/Weekly/Monthly sales\n• Product performance\n• Tax analysis\n• Customer analytics\n• Cashier performance`;
+      response += `\nAvailable Reports:\n• Daily/Weekly/Monthly sales\n• Product performance\n• Tax analysis\n• Customer analytics\n• Cashier performance`;
 
       return { text: response, type: "reports", data: todaySales[0] };
     } catch (error) {
@@ -281,24 +295,28 @@ const getContextualResponse = async (message, userId) => {
 
   if (trainedResponses.users.some((word) => lowerMessage.includes(word))) {
     try {
-      const totalUsers = await Users.countDocuments();
-      const activeUsers = await Users.countDocuments({ active: true });
+      const totalUsers = await Users.countDocuments({ organizationId });
+      const activeUsers = await Users.countDocuments({ 
+        organizationId, 
+        active: true 
+      });
       const usersByRole = await Users.aggregate([
+        { $match: { organizationId } },
         { $group: { _id: "$role", count: { $sum: 1 } } },
       ]);
 
-      let response = `👤 **User Management**\n\n`;
-      response += `• Total Users: **${totalUsers}**\n`;
-      response += `• Active Users: **${activeUsers}**\n\n`;
+      let response = `User Management\n\n`;
+      response += `• Total Users: ${totalUsers}\n`;
+      response += `• Active Users: ${activeUsers}\n\n`;
 
       if (usersByRole.length > 0) {
-        response += `👥 **Users by Role:**\n`;
+        response += `Users by Role:\n`;
         usersByRole.forEach((role) => {
-          response += `• ${role._id}: **${role.count}**\n`;
+          response += `• ${role._id}: ${role.count}\n`;
         });
       }
 
-      response += `\n💡 User Features:\n• Add/Edit users\n• Role management\n• Permission control\n• Activity tracking`;
+      response += `\nUser Features:\n• Add/Edit users\n• Role management\n• Permission control\n• Activity tracking`;
 
       return { text: response, type: "users", data: { totalUsers, activeUsers } };
     } catch (error) {
@@ -311,27 +329,30 @@ const getContextualResponse = async (message, userId) => {
 
   if (trainedResponses.tax.some((word) => lowerMessage.includes(word))) {
     return {
-      text: `💳 **Tax & HS Code Management**\n\nOur system supports comprehensive tax management:\n\n📋 **Tax Types:**\n• Sales Tax (configurable %)\n• Custom Duty (configurable %)\n• Withholding Tax (configurable %)\n\n🏷️ **HS Code Features:**\n• Format: XXXX.XXXX (8 digits)\n• Category-level codes\n• Subcategory-level codes\n• Product-level codes\n• Tax rate mapping\n\n✅ **Exemptions:**\n• SPO Number tracking\n• Schedule Number\n• Item Number\n\n📊 **Tax Reporting:**\n• Total tax collected\n• Tax breakdown by type\n• HS code-wise analysis\n• Duty calculations\n\n💡 Ask me about:\n• Specific HS codes\n• Tax calculations\n• Exemption details\n• Product tax rates`,
+      text: `Tax & HS Code Management\n\nOur system supports comprehensive tax management:\n\nTax Types:\n• Sales Tax (configurable %)\n• Custom Duty (configurable %)\n• Withholding Tax (configurable %)\n\nHS Code Features:\n• Format: XXXX.XXXX (8 digits)\n• Category-level codes\n• Subcategory-level codes\n• Product-level codes\n• Tax rate mapping\n\nExemptions:\n• SPO Number tracking\n• Schedule Number\n• Item Number\n\nTax Reporting:\n• Total tax collected\n• Tax breakdown by type\n• HS code-wise analysis\n• Duty calculations\n\nAsk me about:\n• Specific HS codes\n• Tax calculations\n• Exemption details\n• Product tax rates`,
       type: "tax",
     };
   }
 
   if (lowerMessage.includes("low stock") || lowerMessage.includes("alert")) {
     try {
-      const lowStock = await Products.find({ quantity: { $lt: 10 } })
+      const lowStock = await Products.find({ 
+        organizationId, 
+        quantity: { $lt: 10 } 
+      })
         .limit(10)
         .select("name quantity price");
 
-      let response = `⚠️ **Low Stock Alert**\n\n`;
+      let response = `Low Stock Alert\n\n`;
 
       if (lowStock.length > 0) {
-        response += `Found **${lowStock.length}** products with low stock:\n\n`;
+        response += `Found ${lowStock.length} products with low stock:\n\n`;
         lowStock.forEach((product, index) => {
-          response += `${index + 1}. ${product.name}\n   • Current Stock: **${product.quantity}**\n   • Price: Rs ${product.price}\n\n`;
+          response += `${index + 1}. ${product.name}\n   • Current Stock: ${product.quantity}\n   • Price: Rs ${product.price}\n\n`;
         });
-        response += `🔔 Consider restocking these items soon!`;
+        response += `Consider restocking these items soon!`;
       } else {
-        response += `✅ All products are well-stocked! No low stock alerts at this time.`;
+        response += `All products are well-stocked! No low stock alerts at this time.`;
       }
 
       return { text: response, type: "alert", data: { lowStockCount: lowStock.length } };
@@ -347,20 +368,22 @@ const getContextualResponse = async (message, userId) => {
     try {
       const today = new Date().toISOString().split("T")[0];
       const activeSessions = await CashierDailySession.countDocuments({
+        organizationId,
         sessionDate: today,
         currentlyActive: true,
       });
 
       const todaySessions = await CashierDailySession.find({
+        organizationId,
         sessionDate: today,
       }).select("cashierName totalDailySales totalDailyTransactions");
 
-      let response = `👨‍💼 **Cashier Activity Today**\n\n`;
-      response += `• Active Sessions: **${activeSessions}**\n`;
-      response += `• Total Cashiers Checked In: **${todaySessions.length}**\n\n`;
+      let response = `Cashier Activity Today\n\n`;
+      response += `• Active Sessions: ${activeSessions}\n`;
+      response += `• Total Cashiers Checked In: ${todaySessions.length}\n\n`;
 
       if (todaySessions.length > 0) {
-        response += `📊 **Today's Performance:**\n`;
+        response += `Today's Performance:\n`;
         todaySessions.forEach((session, index) => {
           response += `${index + 1}. ${session.cashierName}\n   • Sales: Rs ${session.totalDailySales}\n   • Transactions: ${session.totalDailyTransactions}\n\n`;
         });
@@ -376,7 +399,7 @@ const getContextualResponse = async (message, userId) => {
   }
 
   return {
-    text: `I'm here to help! I didn't quite understand that. Here's what I can assist with:\n\n📦 **Products** - Inventory, stock levels, product details\n💰 **Sales** - Orders, revenue, transactions\n👥 **Customers** - Customer info, purchase history\n🏢 **Suppliers** - Supplier management, orders, dues\n📊 **Reports** - Analytics, statistics, insights\n👤 **Users** - Staff management, roles, permissions\n💳 **Tax** - HS codes, tax rates, exemptions\n⚠️ **Alerts** - Low stock, notifications\n\nTry asking something like:\n• "Show me today's sales"\n• "How many products do we have?"\n• "Who are our top customers?"\n• "Check low stock items"\n• "Show supplier information"`,
+    text: `I'm here to help! I didn't quite understand that. Here's what I can assist with:\n\nProducts - Inventory, stock levels, product details\nSales - Orders, revenue, transactions\nCustomers - Customer info, purchase history\nSuppliers - Supplier management, orders, dues\nReports - Analytics, statistics, insights\nUsers - Staff management, roles, permissions\nTax - HS codes, tax rates, exemptions\nAlerts - Low stock, notifications\n\nTry asking something like:\n• "Show me today's sales"\n• "How many products do we have?"\n• "Who are our top customers?"\n• "Check low stock items"\n• "Show supplier information"`,
     type: "fallback",
   };
 };
@@ -385,12 +408,17 @@ exports.chatWithBot = async (req, res) => {
   try {
     const { message } = req.body;
     const userId = req.user.userId;
+    const organizationId = req.organizationId || getOrganizationId(req);
+
+    if (!organizationId) {
+      return res.status(401).json({ error: "Organization ID is missing" });
+    }
 
     if (!message || message.trim() === "") {
       return res.status(400).json({ error: "Message is required" });
     }
 
-    const response = await getContextualResponse(message, userId);
+    const response = await getContextualResponse(message, userId, organizationId);
 
     res.status(200).json({
       success: true,
@@ -410,6 +438,12 @@ exports.chatWithBot = async (req, res) => {
 
 exports.getChatHistory = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(401).json({ error: "Organization ID is missing" });
+    }
+
     res.status(200).json({
       success: true,
       message: "Chat history feature coming soon",
@@ -423,6 +457,12 @@ exports.getChatHistory = async (req, res) => {
 
 exports.clearChatHistory = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(401).json({ error: "Organization ID is missing" });
+    }
+
     res.status(200).json({
       success: true,
       message: "Chat history cleared",

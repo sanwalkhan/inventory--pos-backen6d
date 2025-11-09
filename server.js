@@ -5,21 +5,15 @@ const cron = require("node-cron");
 require("dotenv").config();
 require("./models/dbConnection");
 const http = require("http");
-const { Server } = require("socket.io");
 const { ExpressPeerServer } = require("peer");
 const Currency = require("./models/currancyModel");
+
+// Import your SocketHandler class
+const SocketHandler = require("./socket/socketHandler"); // Adjust path as needed
 
 // Allowed frontend origin from .env
 const allowedOrigins = "*";
 
-// Initialize default currency if not exists
-(async () => {
-  const count = await Currency.countDocuments();
-  if (count === 0) {
-    await Currency.create({});
-    console.log("Default PKR currency created");
-  }
-})();
 
 // Initialize Express
 const app = express();
@@ -28,45 +22,16 @@ const port = process.env.PORT || 8080;
 // Create HTTP server
 const server = http.createServer(app);
 
-// --- Socket.IO Setup ---
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-});
-
-// Store connected users for notifications
-const connectedUsers = new Map();
-
-io.on("connection", (socket) => {
-  console.log("A client connected:", socket.id);
-
-  socket.on("authenticate", (data) => {
-    if (data.userId) {
-      socket.join(`user_${data.userId}`);
-      connectedUsers.set(socket.id, data.userId);
-      console.log(`User ${data.userId} joined room user_${data.userId}`);
-    }
-  });
-
-  socket.on("ping", (msg) => {
-    console.log("Ping received:", msg);
-    socket.emit("pong", "Hello from server!");
-  });
-
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
-    const userId = connectedUsers.get(socket.id);
-    if (userId) connectedUsers.delete(socket.id);
-  });
-});
+// --- Initialize SocketHandler (Single Instance) ---
+const socketHandler = new SocketHandler(server);
+const io = socketHandler.io; // Get the io instance from SocketHandler
 
 // Make io available to routes
 app.locals.io = io;
+app.locals.socketHandler = socketHandler;
 app.use((req, res, next) => {
   req.io = io;
+  req.socketHandler = socketHandler;
   next();
 });
 
@@ -88,7 +53,13 @@ app.get("/", (req, res) => {
     status: "ok",
     timestamp: new Date(),
     message: "Server is running",
+    socketConnections: io.engine.clientsCount,
   });
+});
+
+// --- Socket Status Endpoint ---
+app.get("/socket-status", (req, res) => {
+  res.json(socketHandler.getStatus());
 });
 
 // --- Routes Imports ---
@@ -118,6 +89,7 @@ const resetPasswordRouter = require("./routes/ResetPasswordRoutes");
 const currencyRouter = require("./routes/currencyRoutes");
 const NotificationRouter = require("./routes/notificationRoutes");
 const chatbotRouter = require("./routes/chatbotRoutes");
+const logorouter = require("./routes/logoRoutes");
 
 // --- Register Routes ---
 app.use("/api", NotificationRouter);
@@ -145,6 +117,7 @@ app.use("/api", supervisorRouter);
 app.use("/api", resetPasswordRouter);
 app.use("/api", currencyRouter);
 app.use("/api/chatbot", chatbotRouter);
+app.use("/api",logorouter)
 
 // --- PeerJS integrated on same port ---
 const peerServer = ExpressPeerServer(server, {
@@ -191,6 +164,7 @@ process.on("SIGINT", () => {
 server.listen(port, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${port}`);
   console.log(`🌐 Allowed Origin: ${allowedOrigins}`);
-  console.log("🔌 Socket.IO server running with real-time notifications");
+  console.log("🔌 SocketHandler initialized with real-time features");
   console.log("🩺 Health Check: GET /");
+  console.log("📊 Socket Status: GET /socket-status");
 });

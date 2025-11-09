@@ -2,10 +2,26 @@ const CashierDailySession = require('../models/cashierModel');
 const { Order } = require('../models/orderModel');
 const User = require('../models/userModel');
 const { createCashierNotification } = require('./notificationController');
+const { getOrganizationId } = require("../middleware/authmiddleware");
 
-// Enhanced check in with notification
+// Helper to get organization ID from request
+const getRequestOrganizationId = (req) => {
+  return req.organizationId || getOrganizationId(req);
+};
+
+// Enhanced check in with notification and organization isolation
+// Enhanced check in with notification and organization isolation
 exports.checkIn = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { cashierId } = req.body;
 
     if (!cashierId) {
@@ -15,32 +31,38 @@ exports.checkIn = async (req, res) => {
       });
     }
 
-    // Get cashier details
-    const cashier = await User.findById(cashierId).select('username email');
+    // Get cashier details with organization isolation
+    const cashier = await User.findOne({
+      _id: cashierId,
+      organizationId: organizationId
+    }).select('username email');
+    
     if (!cashier) {
       return res.status(404).json({
         success: false,
-        message: 'Cashier not found'
+        message: 'Cashier not found in your organization'
       });
     }
 
     const today = new Date().toISOString().split('T')[0];
     const checkInTime = new Date();
 
-    // Find or create daily session document
+    // Find or create daily session document with organization isolation
     let dailySession = await CashierDailySession.findOne({
       cashierId,
-      sessionDate: today
+      sessionDate: today,
+      organizationId: organizationId
     });
 
     if (!dailySession) {
-      // Create new daily session document
+      // Create new daily session document with organization isolation
       dailySession = new CashierDailySession({
         cashierId,
         cashierName: cashier.username,
         sessionDate: today,
         sessions: [],
-        autoScreenShareRequested: true
+        autoScreenShareRequested: true,
+        organizationId: organizationId
       });
     }
 
@@ -63,17 +85,19 @@ exports.checkIn = async (req, res) => {
           totalTransactions: dailySession.totalDailyTransactions,
           currentlyActive: true
         },
-        screenShareEnabled: true
+        screenShareEnabled: true,
+        organizationId: organizationId
       });
     }
 
-    // Create new session entry
+    // Create new session entry WITH ORGANIZATION ID
     const newSessionEntry = {
       checkInTime,
       isActive: true,
       screenShareEnabled: true,
       autoScreenShareRequested: true,
-      lastActivityTime: checkInTime
+      lastActivityTime: checkInTime,
+      organizationId: organizationId // ← THIS IS THE FIX
     };
 
     dailySession.sessions.push(newSessionEntry);
@@ -83,7 +107,7 @@ exports.checkIn = async (req, res) => {
 
     await dailySession.save();
 
-    // Create notification
+    // Create notification with organization isolation
     try {
       await createCashierNotification('check-in', {
         cashierId,
@@ -91,14 +115,14 @@ exports.checkIn = async (req, res) => {
       }, {
         _id: dailySession._id,
         checkInTime: newSessionEntry.checkInTime
-      }, req.io);
+      }, req.io, organizationId);
     } catch (notificationError) {
       console.error('Failed to create check-in notification:', notificationError);
     }
 
-    // Emit check-in event via socket
+    // Emit check-in event via socket with organization isolation
     if (req.io) {
-      req.io.emit('cashier-checked-in', {
+      req.io.to(`org_${organizationId}`).emit('cashier-checked-in', {
         cashierId,
         sessionData: {
           _id: dailySession._id,
@@ -106,7 +130,8 @@ exports.checkIn = async (req, res) => {
           totalSales: dailySession.totalDailySales,
           totalTransactions: dailySession.totalDailyTransactions
         },
-        cashierName: cashier.username
+        cashierName: cashier.username,
+        organizationId: organizationId
       });
     }
 
@@ -120,7 +145,8 @@ exports.checkIn = async (req, res) => {
         totalTransactions: dailySession.totalDailyTransactions,
         currentlyActive: true
       },
-      screenShareEnabled: true
+      screenShareEnabled: true,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -133,9 +159,18 @@ exports.checkIn = async (req, res) => {
   }
 };
 
-// Enhanced check out with notification
+// Enhanced check out with notification and organization isolation
 exports.checkOut = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { cashierId, reason, reasonDetails } = req.body;
 
     if (!cashierId) {
@@ -148,17 +183,18 @@ exports.checkOut = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const checkOutTime = new Date();
 
-    // Find daily session document
+    // Find daily session document with organization isolation
     const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      currentlyActive: true
+      currentlyActive: true,
+      organizationId: organizationId
     });
 
     if (!dailySession) {
       return res.status(404).json({
         success: false,
-        message: 'No active session found for today'
+        message: 'No active session found for today in your organization'
       });
     }
 
@@ -173,11 +209,12 @@ exports.checkOut = async (req, res) => {
 
     const activeSession = dailySession.sessions[activeSessionIndex];
 
-    // Calculate session statistics
+    // Calculate session statistics with organization isolation
     const sessionStats = await Order.aggregate([
       {
         $match: {
           cashierId: cashierId,
+          organizationId: organizationId,
           date: {
             $gte: activeSession.checkInTime,
             $lte: checkOutTime
@@ -212,7 +249,7 @@ exports.checkOut = async (req, res) => {
 
     await dailySession.save();
 
-    // Create notification
+    // Create notification with organization isolation
     try {
       await createCashierNotification('check-out', {
         cashierId,
@@ -225,14 +262,14 @@ exports.checkOut = async (req, res) => {
         salesDuringSession: activeSession.salesDuringSession,
         transactionsDuringSession: activeSession.transactionsDuringSession,
         reason: activeSession.checkoutReason
-      }, req.io);
+      }, req.io, organizationId);
     } catch (notificationError) {
       console.error('Failed to create check-out notification:', notificationError);
     }
 
-    // Emit check-out event via socket
+    // Emit check-out event via socket with organization isolation
     if (req.io) {
-      req.io.emit('cashier-checked-out', {
+      req.io.to(`org_${organizationId}`).emit('cashier-checked-out', {
         cashierId,
         sessionData: {
           _id: dailySession._id,
@@ -242,7 +279,8 @@ exports.checkOut = async (req, res) => {
           totalTransactions: dailySession.totalDailyTransactions
         },
         reason: activeSession.checkoutReason,
-        reasonDetails: activeSession.checkoutReasonDetails
+        reasonDetails: activeSession.checkoutReasonDetails,
+        organizationId: organizationId
       });
     }
 
@@ -256,7 +294,8 @@ exports.checkOut = async (req, res) => {
         totalSales: dailySession.totalDailySales,
         totalTransactions: dailySession.totalDailyTransactions
       },
-      sessionStats: stats
+      sessionStats: stats,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -269,9 +308,18 @@ exports.checkOut = async (req, res) => {
   }
 };
 
-// Auto checkout with notification
+// Auto checkout with notification and organization isolation
 exports.autoCheckOut = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { cashierId, reason, reasonDetails } = req.body;
 
     if (!cashierId) {
@@ -284,17 +332,18 @@ exports.autoCheckOut = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const checkOutTime = new Date();
 
-    // Find daily session document
+    // Find daily session document with organization isolation
     const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      currentlyActive: true
+      currentlyActive: true,
+      organizationId: organizationId
     });
 
     if (!dailySession) {
       return res.status(404).json({
         success: false,
-        message: 'No active session found for today'
+        message: 'No active session found for today in your organization'
       });
     }
 
@@ -309,11 +358,12 @@ exports.autoCheckOut = async (req, res) => {
 
     const activeSession = dailySession.sessions[activeSessionIndex];
 
-    // Calculate session statistics
+    // Calculate session statistics with organization isolation
     const sessionStats = await Order.aggregate([
       {
         $match: {
           cashierId: cashierId,
+          organizationId: organizationId,
           date: {
             $gte: activeSession.checkInTime,
             $lte: checkOutTime
@@ -348,7 +398,7 @@ exports.autoCheckOut = async (req, res) => {
 
     await dailySession.save();
 
-    // Create notification
+    // Create notification with organization isolation
     try {
       await createCashierNotification('auto-checkout', {
         cashierId,
@@ -360,14 +410,14 @@ exports.autoCheckOut = async (req, res) => {
         sessionDuration: activeSession.sessionDuration,
         reason: activeSession.checkoutReason,
         reasonDetails: activeSession.checkoutReasonDetails
-      }, req.io);
+      }, req.io, organizationId);
     } catch (notificationError) {
       console.error('Failed to create auto-checkout notification:', notificationError);
     }
 
-    // Emit auto-checkout event via socket
+    // Emit auto-checkout event via socket with organization isolation
     if (req.io) {
-      req.io.emit('cashier-auto-checked-out', {
+      req.io.to(`org_${organizationId}`).emit('cashier-auto-checked-out', {
         cashierId,
         sessionData: {
           _id: dailySession._id,
@@ -377,7 +427,8 @@ exports.autoCheckOut = async (req, res) => {
           totalTransactions: dailySession.totalDailyTransactions
         },
         reason: activeSession.checkoutReason,
-        reasonDetails: activeSession.checkoutReasonDetails
+        reasonDetails: activeSession.checkoutReasonDetails,
+        organizationId: organizationId
       });
     }
 
@@ -391,7 +442,8 @@ exports.autoCheckOut = async (req, res) => {
         totalSales: dailySession.totalDailySales,
         totalTransactions: dailySession.totalDailyTransactions
       },
-      sessionStats: stats
+      sessionStats: stats,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -404,18 +456,29 @@ exports.autoCheckOut = async (req, res) => {
   }
 };
 
-// Update screen sharing status with notification
+// Update screen sharing status with notification and organization isolation
 exports.updateScreenShareStatus = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { cashierId } = req.params;
     const { isSharing, peerId } = req.body;
     
     const today = new Date().toISOString().split('T')[0];
     
+    // Find daily session with organization isolation
     const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      currentlyActive: true
+      currentlyActive: true,
+      organizationId: organizationId
     });
 
     if (dailySession && dailySession.activeSessionIndex !== null) {
@@ -430,7 +493,7 @@ exports.updateScreenShareStatus = async (req, res) => {
       
       await dailySession.save();
 
-      // Create notification if screen sharing was disconnected
+      // Create notification if screen sharing was disconnected with organization isolation
       if (wasSharing && !isSharing) {
         try {
           await createCashierNotification('screen-share-disconnected', {
@@ -438,19 +501,20 @@ exports.updateScreenShareStatus = async (req, res) => {
             cashierName: dailySession.cashierName
           }, {
             _id: dailySession._id
-          }, req.io);
+          }, req.io, organizationId);
         } catch (notificationError) {
           console.error('Failed to create screen share notification:', notificationError);
         }
       }
 
-      // Emit screen share status update
+      // Emit screen share status update with organization isolation
       if (req.io) {
-        req.io.emit('screen-share-status-updated', {
+        req.io.to(`org_${organizationId}`).emit('screen-share-status-updated', {
           cashierId,
           isSharing,
           peerId,
-          sessionId: dailySession._id
+          sessionId: dailySession._id,
+          organizationId: organizationId
         });
       }
     }
@@ -458,7 +522,8 @@ exports.updateScreenShareStatus = async (req, res) => {
     res.json({
       success: true,
       message: `Screen sharing ${isSharing ? 'enabled' : 'disabled'}`,
-      session: dailySession
+      session: dailySession,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -471,15 +536,26 @@ exports.updateScreenShareStatus = async (req, res) => {
   }
 };
 
-// Keep all other existing methods unchanged
+// Get session status with organization isolation
 exports.getSessionStatus = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { cashierId } = req.params;
     const today = new Date().toISOString().split('T')[0];
 
+    // Find daily session with organization isolation
     const dailySession = await CashierDailySession.findOne({
       cashierId,
-      sessionDate: today
+      sessionDate: today,
+      organizationId: organizationId
     });
 
     let hasActiveSession = false;
@@ -514,7 +590,8 @@ exports.getSessionStatus = async (req, res) => {
         totalTransactions: dailySession.totalDailyTransactions
       } : null,
       todaysPerformance,
-      screenShareEnabled: activeSession?.screenShareEnabled || false
+      screenShareEnabled: activeSession?.screenShareEnabled || false,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -527,15 +604,27 @@ exports.getSessionStatus = async (req, res) => {
   }
 };
 
+// Update activity with organization isolation
 exports.updateActivity = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { cashierId } = req.params;
     const today = new Date().toISOString().split('T')[0];
 
+    // Find daily session with organization isolation
     const dailySession = await CashierDailySession.findOne({
       cashierId,
       sessionDate: today,
-      currentlyActive: true
+      currentlyActive: true,
+      organizationId: organizationId
     });
 
     if (dailySession && dailySession.activeSessionIndex !== null) {
@@ -547,7 +636,8 @@ exports.updateActivity = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Activity updated'
+      message: 'Activity updated',
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -560,28 +650,54 @@ exports.updateActivity = async (req, res) => {
   }
 };
 
+// Get session history with organization isolation
 exports.getSessionHistory = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const cashierId = req.params.cashierId;
     const today = new Date().toISOString().split('T')[0];
 
-    // Get daily session with all check-ins/check-outs
+    // Verify cashier belongs to organization
+    const cashier = await User.findOne({
+      _id: cashierId,
+      organizationId: organizationId
+    });
+
+    if (!cashier) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cashier not found in your organization'
+      });
+    }
+
+    // Get daily session with all check-ins/check-outs with organization isolation
     const dailySession = await CashierDailySession.findOne({
       cashierId,
-      sessionDate: today
+      sessionDate: today,
+      organizationId: organizationId
     });
 
     if (!dailySession) {
       return res.json({
         success: true,
         sessionHistory: [],
-        dailyStats: null
+        dailyStats: null,
+        organizationId: organizationId
       });
     }
 
-    // Get order history for the day
+    // Get order history for the day with organization isolation
     const orderHistory = await Order.find({
       cashierId,
+      organizationId: organizationId,
       date: { $gte: new Date(today + 'T00:00:00.000Z') }
     }).sort({ date: -1 });
 
@@ -596,7 +712,8 @@ exports.getSessionHistory = async (req, res) => {
         totalDailySales: dailySession.totalDailySales,
         totalDailyTransactions: dailySession.totalDailyTransactions,
         checkoutReasonsSummary: dailySession.checkoutReasonsSummary
-      }
+      },
+      organizationId: organizationId
     });
   } catch (error) {
     console.error('Error fetching session history:', error);
@@ -608,16 +725,31 @@ exports.getSessionHistory = async (req, res) => {
   }
 };
 
+// Mark as read by admin with organization isolation
 exports.markAsReadByAdmin = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { sessionId } = req.params;
     const { adminId } = req.body;
 
-    const dailySession = await CashierDailySession.findById(sessionId);
+    // Find daily session with organization isolation
+    const dailySession = await CashierDailySession.findOne({
+      _id: sessionId,
+      organizationId: organizationId
+    });
+
     if (!dailySession) {
       return res.status(404).json({
         success: false,
-        message: 'Daily session not found'
+        message: 'Daily session not found in your organization'
       });
     }
 
@@ -629,7 +761,8 @@ exports.markAsReadByAdmin = async (req, res) => {
     res.json({
       success: true,
       message: 'Daily session marked as read',
-      session: dailySession
+      session: dailySession,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -642,9 +775,20 @@ exports.markAsReadByAdmin = async (req, res) => {
   }
 };
 
+// Get unread sessions with organization isolation
 exports.getUnreadSessions = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const unreadSessions = await CashierDailySession.find({
+      organizationId: organizationId,
       isReadByAdmin: false,
       currentlyActive: false,
       totalCheckOuts: { $gt: 0 }
@@ -655,7 +799,8 @@ exports.getUnreadSessions = async (req, res) => {
     res.json({
       success: true,
       unreadSessions,
-      count: unreadSessions.length
+      count: unreadSessions.length,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -668,11 +813,23 @@ exports.getUnreadSessions = async (req, res) => {
   }
 };
 
+// Get all daily sessions with organization isolation
 exports.getAllDailySessions = async (req, res) => {
   try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
     const { startDate, endDate, cashierId } = req.query;
     
-    let query = {};
+    let query = {
+      organizationId: organizationId
+    };
     
     if (cashierId) {
       query.cashierId = cashierId;
@@ -696,7 +853,8 @@ exports.getAllDailySessions = async (req, res) => {
     res.json({
       success: true,
       dailySessions,
-      count: dailySessions.length
+      count: dailySessions.length,
+      organizationId: organizationId
     });
 
   } catch (error) {
@@ -704,6 +862,214 @@ exports.getAllDailySessions = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching daily sessions',
+      error: error.message
+    });
+  }
+};
+
+// Get cashier's session history with organization isolation
+exports.getCashierSessionHistory = async (req, res) => {
+  try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
+    const { cashierId } = req.params;
+    const { days = 30 } = req.query;
+
+    // Verify cashier belongs to organization
+    const cashier = await User.findOne({
+      _id: cashierId,
+      organizationId: organizationId
+    });
+
+    if (!cashier) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cashier not found in your organization'
+      });
+    }
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(days));
+
+    const sessions = await CashierDailySession.find({
+      cashierId: cashierId,
+      organizationId: organizationId,
+      sessionDate: {
+        $gte: startDate.toISOString().split('T')[0]
+      }
+    })
+    .sort({ sessionDate: -1 })
+    .select('sessionDate sessions totalDailySales totalDailyTransactions totalSessionDuration');
+
+    res.json({
+      success: true,
+      sessions,
+      cashierInfo: {
+        cashierId: cashier._id,
+        cashierName: cashier.username,
+        email: cashier.email
+      },
+      organizationId: organizationId
+    });
+
+  } catch (error) {
+    console.error('Get cashier session history error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching cashier session history',
+      error: error.message
+    });
+  }
+};
+
+// Force checkout cashier (admin/supervisor action) with organization isolation
+exports.forceCheckOut = async (req, res) => {
+  try {
+    const organizationId = getRequestOrganizationId(req);
+    
+    if (!organizationId) {
+      return res.status(400).json({
+        success: false,
+        message: "Organization ID is required"
+      });
+    }
+
+    const { cashierId } = req.params;
+    const { reason = 'force-checkout', reasonDetails, adminId } = req.body;
+
+    const today = new Date().toISOString().split('T')[0];
+    const checkOutTime = new Date();
+
+    // Find daily session with organization isolation
+    const dailySession = await CashierDailySession.findOne({
+      cashierId,
+      sessionDate: today,
+      currentlyActive: true,
+      organizationId: organizationId
+    });
+
+    if (!dailySession) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active session found for today in your organization'
+      });
+    }
+
+    // Find active session
+    const activeSessionIndex = dailySession.activeSessionIndex;
+    if (activeSessionIndex === null || !dailySession.sessions[activeSessionIndex] || !dailySession.sessions[activeSessionIndex].isActive) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active session found'
+      });
+    }
+
+    const activeSession = dailySession.sessions[activeSessionIndex];
+
+    // Calculate session statistics with organization isolation
+    const sessionStats = await Order.aggregate([
+      {
+        $match: {
+          cashierId: cashierId,
+          organizationId: organizationId,
+          date: {
+            $gte: activeSession.checkInTime,
+            $lte: checkOutTime
+          }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: '$totalPrice' },
+          totalTransactions: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const stats = sessionStats[0] || { totalSales: 0, totalTransactions: 0 };
+
+    // Update the active session
+    activeSession.checkOutTime = checkOutTime;
+    activeSession.isActive = false;
+    activeSession.checkoutReason = reason;
+    activeSession.checkoutReasonDetails = reasonDetails;
+    activeSession.sessionDuration = Math.round((checkOutTime - activeSession.checkInTime) / (1000 * 60));
+    activeSession.salesDuringSession = stats.totalSales;
+    activeSession.transactionsDuringSession = stats.totalTransactions;
+    activeSession.screenShareEnabled = false;
+    activeSession.forceCheckedOut = true;
+    activeSession.forceCheckedOutBy = adminId;
+
+    // Update daily session status
+    dailySession.currentlyActive = false;
+    dailySession.activeSessionIndex = null;
+    dailySession.lastActivityTime = checkOutTime;
+
+    await dailySession.save();
+
+    // Create notification with organization isolation
+    try {
+      await createCashierNotification('force-checkout', {
+        cashierId,
+        cashierName: dailySession.cashierName
+      }, {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        checkOutTime: activeSession.checkOutTime,
+        sessionDuration: activeSession.sessionDuration,
+        reason: activeSession.checkoutReason,
+        reasonDetails: activeSession.checkoutReasonDetails,
+        forceCheckedOutBy: adminId
+      }, req.io, organizationId);
+    } catch (notificationError) {
+      console.error('Failed to create force-checkout notification:', notificationError);
+    }
+
+    // Emit force-checkout event via socket with organization isolation
+    if (req.io) {
+      req.io.to(`org_${organizationId}`).emit('cashier-force-checked-out', {
+        cashierId,
+        sessionData: {
+          _id: dailySession._id,
+          checkInTime: activeSession.checkInTime,
+          checkOutTime: activeSession.checkOutTime,
+          totalSales: dailySession.totalDailySales,
+          totalTransactions: dailySession.totalDailyTransactions
+        },
+        reason: activeSession.checkoutReason,
+        reasonDetails: activeSession.checkoutReasonDetails,
+        forceCheckedOutBy: adminId,
+        organizationId: organizationId
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Cashier force checked out successfully. Reason: ${reason}`,
+      session: {
+        _id: dailySession._id,
+        checkInTime: activeSession.checkInTime,
+        checkOutTime: activeSession.checkOutTime,
+        totalSales: dailySession.totalDailySales,
+        totalTransactions: dailySession.totalDailyTransactions
+      },
+      sessionStats: stats,
+      organizationId: organizationId
+    });
+
+  } catch (error) {
+    console.error('Force check-out error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during force check-out',
       error: error.message
     });
   }

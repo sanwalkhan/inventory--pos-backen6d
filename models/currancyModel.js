@@ -5,7 +5,6 @@ const currencySchema = new mongoose.Schema(
     code: {
       type: String,
       required: true,
-      unique: true,
       default: "PKR"
     },
     symbol: {
@@ -17,7 +16,13 @@ const currencySchema = new mongoose.Schema(
       type: String,
       required: true,
       default: "Pakistani Rupee"
-    }
+    },
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      unique: true,
+   
+    },
   },
   { timestamps: true }
 );

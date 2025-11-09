@@ -2,8 +2,9 @@ const { Products } = require("../models/productModel")
 const { Subcategory } = require("../models/subcategoryModel")
 const cloudinary = require("cloudinary").v2
 const { Order } = require("../models/orderModel")
+const { getOrganizationId } = require("../middleware/authmiddleware")
+const Category = require("../models/categoryModel")
 
-// Helper: Calculate selling prices with taxes and margin
 function calculateSellingPrices({ price, salesTax = 0, customDuty = 0, withholdingTax = 0, margin = 0, discount = 0 }) {
   price = Number.parseFloat(price)
   salesTax = Number.parseFloat(salesTax)
@@ -28,9 +29,9 @@ function calculateSellingPrices({ price, salesTax = 0, customDuty = 0, withholdi
   }
 }
 
-// Get all products with pagination
 const getProducts = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req)
     const page = Number.parseInt(req.query.page) || 1
     const limit = Number.parseInt(req.query.limit) || 10
     const search = req.query.search || ""
@@ -39,7 +40,7 @@ const getProducts = async (req, res) => {
     const sortBy = req.query.sortBy || "name"
     const sortOrder = req.query.sortOrder || "asc"
 
-    const filter = {}
+    const filter = { organizationId }
 
     if (search) {
       filter.$or = [{ name: { $regex: search, $options: "i" } }, { barcode: { $regex: search, $options: "i" } }]
@@ -96,218 +97,301 @@ const addProduct = async (req, res) => {
   try {
     const {
       name,
-      quantity,
       price,
+      quantity,
       barcode,
       categoryId,
       subcategoryId,
       description,
       marginPercent = 0,
       discount = 0,
-      imageUrl,
-      imageSource = "file",
-    } = req.body
+      imageUrl = "",
+    } = req.body;
+    const organizationId = req.organizationId || getOrganizationId(req);
 
-    // Validate required fields
-    if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId) {
-      return res.status(400).json({ message: "All fields are required" })
+    // Required field validation
+    if (!name || !price || !quantity || !barcode || !categoryId || !subcategoryId) {
+      return res.status(400).json({
+        message: "Name, price, quantity, barcode, category, and subcategory are required",
+      });
     }
 
-    // Validate image input (either file or URL)
-    if (imageSource === "file" && !req.file) {
-      return res.status(400).json({ message: "Image file is required when using file upload" })
+    // Validate category exists
+    const category = await Category.findOne({
+      _id: categoryId,
+      organizationId,
+    });
+    if (!category) {
+      return res.status(404).json({ message: "Category not found" });
     }
 
-    if (imageSource === "url" && !imageUrl) {
-      return res.status(400).json({ message: "Image URL is required when using URL input" })
+    // Validate subcategory exists and belongs to category
+    const subcategory = await Subcategory.findOne({
+      _id: subcategoryId,
+      category: categoryId,
+      organizationId,
+    });
+    if (!subcategory) {
+      return res.status(404).json({ message: "Subcategory not found" });
     }
 
-    if (name.length > 100) {
-      return res.status(400).json({ message: "Product name must not exceed 100 characters" })
+    // Check for duplicate barcode
+    const existingBarcode = await Products.findOne({
+      barcode,
+      organizationId,
+    });
+    if (existingBarcode) {
+      return res.status(400).json({ message: "Barcode already exists" });
     }
 
-    if (quantity > 10000) {
-      return res.status(400).json({ message: "Quantity cannot exceed 10,000" })
+    // Parse numeric values
+    const priceNum = parseFloat(price);
+    const quantityNum = parseInt(quantity);
+    const marginPercentNum = parseFloat(marginPercent) || 0;
+    const discountNum = parseFloat(discount) || 0;
+
+    // Validate numeric values
+    if (isNaN(priceNum) || priceNum <= 0) {
+      return res.status(400).json({ message: "Valid price is required" });
+    }
+    if (isNaN(quantityNum) || quantityNum < 0) {
+      return res.status(400).json({ message: "Valid quantity is required" });
+    }
+    if (isNaN(marginPercentNum) || marginPercentNum < 0 || marginPercentNum > 100) {
+      return res.status(400).json({ message: "Margin must be between 0-100%" });
+    }
+    if (isNaN(discountNum) || discountNum < 0 || discountNum > 100) {
+      return res.status(400).json({ message: "Discount must be between 0-100%" });
     }
 
-    if (marginPercent > 100) {
-      return res.status(400).json({ message: "Margin cannot exceed 100%" })
+    // Calculate selling prices
+    const sellingPriceWithoutDiscount = priceNum * (1 + marginPercentNum / 100);
+    const sellingPrice = sellingPriceWithoutDiscount * (1 - discountNum / 100);
+
+    // Handle image - make it optional
+    let image = "";
+    let imagePublicId = "";
+    let imageSource = "file";
+
+    if (req.file) {
+      image = req.file.path;
+      imagePublicId = req.file.filename;
+      imageSource = "file";
+    } else if (imageUrl && imageUrl.trim()) {
+      image = imageUrl.trim();
+      imageSource = "url";
     }
+    // If no image provided, empty strings will be used
 
-    if (discount > 100) {
-      return res.status(400).json({ message: "Discount cannot exceed 100%" })
-    }
-
-    if (discount > marginPercent) {
-      return res.status(400).json({ message: "Discount cannot exceed margin" })
-    }
-
-    if (description.length > 500) {
-      return res.status(400).json({ message: "Description cannot exceed 500 characters" })
-    }
-
-    const subcategory = await Subcategory.findById(subcategoryId).populate("category")
-    if (!subcategory) return res.status(400).json({ message: "Invalid subcategory" })
-
-    const normalizedBarcode = barcode.trim().toLowerCase()
-    const normalizedName = name.trim().toLowerCase()
-
-    const existingBarcode = await Products.findOne({ barcode: normalizedBarcode })
-    if (existingBarcode) return res.status(409).json({ message: "Product with this barcode already exists." })
-
-    const existingName = await Products.findOne({
-      name: { $regex: new RegExp(`^${normalizedName}$`, "i") },
-    })
-    if (existingName) return res.status(409).json({ message: "Product with this name already exists." })
-
-    const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
-      price,
-      salesTax: subcategory.salesTax,
-      customDuty: subcategory.customDuty,
-      withholdingTax: subcategory.withholdingTax,
-      margin: marginPercent,
-      discount,
-    })
-
+    // Create product
     const product = new Products({
+      organizationId,
       name: name.trim(),
-      quantity: Number.parseInt(quantity),
-      price: Number.parseFloat(price),
-      barcode: normalizedBarcode,
+      price: priceNum,
+      quantity: quantityNum,
+      barcode: barcode.trim(),
       categoryId,
       subcategoryId,
-      description,
-      hsCode: subcategory.hsCode,
-      salesTax: subcategory.salesTax,
-      customDuty: subcategory.customDuty,
-      withholdingTax: subcategory.withholdingTax,
-      exemptions: {
-        spoNo: subcategory.exemptions?.spoNo || "",
-        scheduleNo: subcategory.exemptions?.scheduleNo || "",
-        itemNo: subcategory.exemptions?.itemNo || "",
-      },
-      unitOfMeasurement: subcategory.unitOfMeasurement || "piece",
-      marginPercent: Number.parseFloat(marginPercent),
-      discount: Number.parseFloat(discount),
-      sellingPriceWithoutDiscount,
+      description: description?.trim() || "",
+      marginPercent: marginPercentNum,
+      discount: discountNum,
       sellingPrice,
-      image: imageSource === "file" ? req.file.path : imageUrl,
-      imagePublicId: imageSource === "file" ? req.file.filename : null,
-      imageSource: imageSource,
-    })
+      sellingPriceWithoutDiscount,
+      salesTax: subcategory.salesTax || 0,
+      customDuty: subcategory.customDuty || 0,
+      withholdingTax: subcategory.withholdingTax || 0,
+      hsCode: subcategory.hsCode,
+      image,
+      imagePublicId,
+      imageSource,
+    });
 
-    await product.save()
-    res.status(201).json({ message: "Product created successfully", product })
+    await product.save();
+
+    // Populate the response
+    await product.populate("categoryId");
+    await product.populate("subcategoryId");
+
+    res.status(201).json({
+      message: "Product created successfully",
+      product,
+    });
   } catch (error) {
-    console.error("Error adding product:", error.message)
-    res.status(500).json({ message: "Server error" })
-  }
-}
+    console.error("Error adding product:", error.message);
 
+    if (error.code === 11000) {
+      return res.status(400).json({
+        message: "Duplicate entry. Please use unique values.",
+      });
+    }
+
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// UPDATE PRODUCT
 const updateProduct = async (req, res) => {
   try {
-    const { id } = req.params
     const {
       name,
-      quantity,
       price,
+      quantity,
       barcode,
       categoryId,
       subcategoryId,
       description,
       marginPercent,
-      discount = 0,
-      imageUrl,
-      imageSource = "file",
-    } = req.body
-
-    if (!name || !description || !quantity || !price || !barcode || !categoryId || !subcategoryId) {
-      return res.status(400).json({ message: "All fields are required" })
-    }
-
-    if (name.length > 100) {
-      return res.status(400).json({ message: "Product name must not exceed 100 characters" })
-    }
-
-    if (quantity > 10000) {
-      return res.status(400).json({ message: "Quantity cannot exceed 10,000" })
-    }
-
-    const product = await Products.findById(id)
-    if (!product) return res.status(404).json({ message: "Product not found" })
-
-    const subcategory = await Subcategory.findById(subcategoryId).populate("category")
-    if (!subcategory) return res.status(400).json({ message: "Invalid subcategory" })
-
-    const normalizedBarcode = barcode.trim().toLowerCase()
-    const normalizedName = name.trim().toLowerCase()
-
-    const duplicateBarcode = await Products.findOne({
-      _id: { $ne: id },
-      barcode: normalizedBarcode,
-    })
-    if (duplicateBarcode) return res.status(409).json({ message: "Another product with this barcode already exists." })
-
-    const duplicateName = await Products.findOne({
-      _id: { $ne: id },
-      name: { $regex: new RegExp(`^${normalizedName}$`, "i") },
-    })
-    if (duplicateName) return res.status(409).json({ message: "Another product with this name already exists." })
-
-    const { sellingPriceWithoutDiscount, sellingPrice } = calculateSellingPrices({
-      price,
-      salesTax: subcategory.salesTax,
-      customDuty: subcategory.customDuty,
-      withholdingTax: subcategory.withholdingTax,
-      margin: marginPercent || product.marginPercent,
       discount,
-    })
+      imageUrl = "",
+    } = req.body;
+    const { id } = req.params;
+    const organizationId = req.organizationId || getOrganizationId(req);
+
+    const product = await Products.findOne({
+      _id: id,
+      organizationId,
+    }).populate("categoryId subcategoryId");
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Validate category if provided
+    if (categoryId) {
+      const category = await Category.findOne({
+        _id: categoryId,
+        organizationId,
+      });
+      if (!category) {
+        return res.status(404).json({ message: "Category not found" });
+      }
+    }
+
+    // Validate subcategory if provided
+    if (subcategoryId) {
+      const subcategory = await Subcategory.findOne({
+        _id: subcategoryId,
+        category: categoryId || product.categoryId._id,
+        organizationId,
+      });
+      if (!subcategory) {
+        return res.status(404).json({ message: "Subcategory not found" });
+      }
+    }
+
+    // Check for duplicate barcode
+    if (barcode && barcode !== product.barcode) {
+      const existingBarcode = await Products.findOne({
+        barcode,
+        organizationId,
+        _id: { $ne: id },
+      });
+      if (existingBarcode) {
+        return res.status(400).json({ message: "Barcode already exists" });
+      }
+    }
+
+    // Parse numeric values
+    const priceNum = price !== undefined ? parseFloat(price) : product.price;
+    const quantityNum = quantity !== undefined ? parseInt(quantity) : product.quantity;
+    const marginPercentNum = marginPercent !== undefined ? parseFloat(marginPercent) : product.marginPercent;
+    const discountNum = discount !== undefined ? parseFloat(discount) : product.discount;
+
+    // Validate numeric values
+    if (price !== undefined && (isNaN(priceNum) || priceNum <= 0)) {
+      return res.status(400).json({ message: "Valid price is required" });
+    }
+    if (quantity !== undefined && (isNaN(quantityNum) || quantityNum < 0)) {
+      return res.status(400).json({ message: "Valid quantity is required" });
+    }
+    if (marginPercent !== undefined && (isNaN(marginPercentNum) || marginPercentNum < 0 || marginPercentNum > 100)) {
+      return res.status(400).json({ message: "Margin must be between 0-100%" });
+    }
+    if (discount !== undefined && (isNaN(discountNum) || discountNum < 0 || discountNum > 100)) {
+      return res.status(400).json({ message: "Discount must be between 0-100%" });
+    }
+
+    // Calculate selling prices
+    const sellingPriceWithoutDiscount = priceNum * (1 + marginPercentNum / 100);
+    const sellingPrice = sellingPriceWithoutDiscount * (1 - discountNum / 100);
+
+    // Get subcategory for tax info
+    const subcategory = await Subcategory.findOne({
+      _id: subcategoryId || product.subcategoryId._id,
+      organizationId,
+    });
 
     const updateData = {
-      name: name.trim(),
-      quantity: Number.parseInt(quantity),
-      price: Number.parseFloat(price),
-      barcode: normalizedBarcode,
-      categoryId,
-      subcategoryId,
-      description,
-      hsCode: subcategory.hsCode,
-      salesTax: subcategory.salesTax,
-      customDuty: subcategory.customDuty,
-      withholdingTax: subcategory.withholdingTax,
-      exemptions: {
-        spoNo: subcategory.exemptions?.spoNo || "",
-        scheduleNo: subcategory.exemptions?.scheduleNo || "",
-        itemNo: subcategory.exemptions?.itemNo || "",
-      },
-      unitOfMeasurement: subcategory.unitOfMeasurement || "piece",
-      marginPercent: Number.parseFloat(marginPercent || product.marginPercent),
-      discount: Number.parseFloat(discount),
-      sellingPriceWithoutDiscount,
+      ...(name && { name: name.trim() }),
+      ...(price !== undefined && { price: priceNum }),
+      ...(quantity !== undefined && { quantity: quantityNum }),
+      ...(barcode && { barcode: barcode.trim() }),
+      ...(categoryId && { categoryId }),
+      ...(subcategoryId && { subcategoryId }),
+      ...(description !== undefined && { description: description.trim() }),
+      ...(marginPercent !== undefined && { marginPercent: marginPercentNum }),
+      ...(discount !== undefined && { discount: discountNum }),
       sellingPrice,
-    }
+      sellingPriceWithoutDiscount,
+      salesTax: subcategory?.salesTax || product.salesTax,
+      customDuty: subcategory?.customDuty || product.customDuty,
+      withholdingTax: subcategory?.withholdingTax || product.withholdingTax,
+      hsCode: subcategory?.hsCode || product.hsCode,
+    };
 
-    if (req.file || imageUrl) {
+    // Handle image updates - optional
+    if (req.file) {
+      // Delete old image if exists
       if (product.imagePublicId && product.imageSource === "file") {
-        await cloudinary.uploader.destroy(product.imagePublicId)
+        await cloudinary.uploader.destroy(product.imagePublicId);
       }
-      updateData.image = req.file ? req.file.path : imageUrl
-      updateData.imagePublicId = req.file ? req.file.filename : null
-      updateData.imageSource = req.file ? "file" : "url"
+      updateData.image = req.file.path;
+      updateData.imagePublicId = req.file.filename;
+      updateData.imageSource = "file";
+    } else if (imageUrl && imageUrl.trim()) {
+      // Delete old image if exists
+      if (product.imagePublicId && product.imageSource === "file") {
+        await cloudinary.uploader.destroy(product.imagePublicId);
+      }
+      updateData.image = imageUrl.trim();
+      updateData.imagePublicId = "";
+      updateData.imageSource = "url";
+    } else if (imageUrl === "") {
+      // Clear image if empty string provided
+      if (product.imagePublicId && product.imageSource === "file") {
+        await cloudinary.uploader.destroy(product.imagePublicId);
+      }
+      updateData.image = "";
+      updateData.imagePublicId = "";
+      updateData.imageSource = "file";
+    }
+    // If no image provided in update, keep existing image
+
+    const updatedProduct = await Products.findByIdAndUpdate(id, updateData, {
+      new: true,
+    }).populate("categoryId subcategoryId");
+
+    res.status(200).json({
+      message: "Product updated successfully",
+      product: updatedProduct,
+    });
+  } catch (error) {
+    console.error("Error updating product:", error.message);
+
+    if (error.code === 11000) {
+      return res.status(400).json({
+        message: "Duplicate entry. Please use unique values.",
+      });
     }
 
-    const updatedProduct = await Products.findByIdAndUpdate(id, updateData, { new: true })
-    res.status(200).json({ message: "Product updated successfully", product: updatedProduct })
-  } catch (error) {
-    console.error("Error updating product:", error.message)
-    res.status(500).json({ message: "Server error" })
+    res.status(500).json({ message: "Server error" });
   }
-}
+};
 
-// Delete product
 const deleteProduct = async (req, res) => {
   try {
-    const product = await Products.findById(req.params.id)
+    const organizationId = req.organizationId || getOrganizationId(req)
+    const product = await Products.findOne({ _id: req.params.id, organizationId })
     if (!product) {
       return res.status(404).json({ message: "Product not found" })
     }
@@ -324,14 +408,14 @@ const deleteProduct = async (req, res) => {
   }
 }
 
-// Get by subcategory (query param) with pagination
 const getProductsBySubCategory = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req)
     const page = Number.parseInt(req.query.page) || 1
     const limit = Number.parseInt(req.query.limit) || 8
     const subcategoryId = req.query.subcategory
 
-    const filter = {}
+    const filter = { organizationId }
     if (subcategoryId) {
       filter.subcategoryId = subcategoryId
     }
@@ -363,14 +447,14 @@ const getProductsBySubCategory = async (req, res) => {
   }
 }
 
-// Get by subcategory (URL param) with pagination
 const getProductsModel = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req)
     const page = Number.parseInt(req.query.page) || 1
     const limit = Number.parseInt(req.query.limit) || 8
     const subcategoryId = req.params.subcategoryId
 
-    const filter = {}
+    const filter = { organizationId }
     if (subcategoryId) {
       filter.subcategoryId = subcategoryId
     }
@@ -402,14 +486,14 @@ const getProductsModel = async (req, res) => {
   }
 }
 
-// Search products by name, barcode, or HS code
 const getproductByname = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req)
     const { name, hsCode } = req.query
     const page = Number.parseInt(req.query.page) || 1
     const limit = Number.parseInt(req.query.limit) || 8
 
-    const filter = {}
+    const filter = { organizationId }
 
     if (name) {
       filter.name = { $regex: name, $options: "i" }
@@ -452,6 +536,7 @@ const getproductByname = async (req, res) => {
 
 const getProductBycategory = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req)
     const { categoryId } = req.query
     const page = Number.parseInt(req.query.page) || 1
     const limit = Number.parseInt(req.query.limit) || 8
@@ -460,7 +545,7 @@ const getProductBycategory = async (req, res) => {
       return res.status(400).json({ message: "Category id is required" })
     }
 
-    const filter = { categoryId: categoryId }
+    const filter = { categoryId: categoryId, organizationId }
 
     const skip = (page - 1) * limit
     const totalProducts = await Products.countDocuments(filter)
@@ -491,6 +576,7 @@ const getProductBycategory = async (req, res) => {
 
 const getProductByBarcode = async (req, res) => {
   try {
+    const organizationId = req.organizationId || getOrganizationId(req)
     const { barcode } = req.query
     if (!barcode) {
       return res.status(400).json({ message: "Barcode is required" })
@@ -498,12 +584,13 @@ const getProductByBarcode = async (req, res) => {
 
     const normalizedBarcode = barcode.trim().toLowerCase()
     const product = await Products.find({
+      organizationId,
       barcode: { $regex: `^${normalizedBarcode}$`, $options: "i" },
     })
       .populate("subcategoryId", "subcategoryName")
       .populate("categoryId", "categoryName")
 
-    if (!product) {
+    if (!product || product.length === 0) {
       return res.status(404).json({ message: "Product not found" })
     }
 
@@ -516,8 +603,9 @@ const getProductByBarcode = async (req, res) => {
 
 const getProductWithStock = async (req, res) => {
   try {
-    const products = await Products.find({ quantity: { $gt: 0 } })
-    if (!products) {
+    const organizationId = req.organizationId || getOrganizationId(req)
+    const products = await Products.find({ organizationId, quantity: { $gt: 0 } })
+    if (!products || products.length === 0) {
       return res.status(404).json({ message: "No products found" })
     }
     res.status(200).json({ products })
@@ -529,8 +617,9 @@ const getProductWithStock = async (req, res) => {
 
 const countEachProductOrder = async (req, res) => {
   try {
-    const allProducts = await Products.find().lean()
-    const allOrders = await Order.find().lean()
+    const organizationId = req.organizationId || getOrganizationId(req)
+    const allProducts = await Products.find({ organizationId }).lean()
+    const allOrders = await Order.find({ organizationId }).lean()
 
     const productOrderCountMap = {}
 

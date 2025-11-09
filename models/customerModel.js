@@ -13,6 +13,13 @@ const orderSchema = new mongoose.Schema({
   items: [purchaseItemSchema],
   cashierId: { type: String }, // Added cashier ID
   cashierName: { type: String }, // Added cashier name
+  organizationId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Organization",
+    required: function () {
+      return true;
+    },
+  },
   paymentMethod: { 
     type: String, 
     enum: ["cash", "card", "mobile" ,"split"],
@@ -44,7 +51,14 @@ const customerRefundHistorySchema = new mongoose.Schema({
 const customerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
-    phone: { type: String, required: true, unique: true },
+    phone: { type: String, required: true},
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      required: function () {
+        return true;
+      },
+    },
     purchaseHistory: [orderSchema], // Array of orders, each with date and items
     purchaseCount: { type: Number, required: true, default: 0 },
     totalSpent: { type: Number, default: 0 }, // Added total spent
@@ -55,7 +69,8 @@ const customerSchema = new mongoose.Schema(
 );
 
 // Indexes for better performance
-customerSchema.index({ phone: 1 });
+// In customerModel.js
+customerSchema.index({ phone: 1, organizationId: 1 }, { unique: true });
 customerSchema.index({ createdAt: -1 });
 customerSchema.index({ lastPurchaseDate: -1 });
 

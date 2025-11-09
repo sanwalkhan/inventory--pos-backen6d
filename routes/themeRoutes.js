@@ -4,5 +4,6 @@ const themeController = require("../controllers/themeController");
 
 router.get("/theme", themeController.getTheme);
 router.put("/theme", themeController.updateTheme);
+router.get("/themeunauthorization", themeController.getThemeUnAuthenticated);
 
 module.exports = router;

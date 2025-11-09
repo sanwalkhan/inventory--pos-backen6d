@@ -6,6 +6,11 @@ const OrderItemSchema = new mongoose.Schema({
     ref: "Products",
     required: true,
   },
+  organizationId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Organization",
+    required: true
+  },
   name: { type: String, required: true },
   barcode: { type: String, required: true },
   hsCode: {
@@ -13,7 +18,6 @@ const OrderItemSchema = new mongoose.Schema({
     required: true,
     match: [/^\d{4}\.\d{4}$/, 'HS Code must be in format XXXX.XXXX (8 digits total)']
   },
-
   // Pricing information
   costPrice: { type: Number, required: true },
   sellingPrice: { type: Number, required: true },
@@ -101,7 +105,15 @@ const SplitPaymentSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
+// FIXED: Add organizationId to the main OrderSchema (not OrderItemSchema)
 const OrderSchema = new mongoose.Schema({
+  // ADD organizationId HERE (in the main schema)
+  organizationId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Organization",
+    required: true
+  },
+  
   userName: { type: String, required: true },
   userPhone: { type: String, required: true },
   cashierId: { type: String, required: true },
@@ -142,11 +154,12 @@ const OrderSchema = new mongoose.Schema({
 });
 
 // Indexes for better performance
+OrderSchema.index({ organizationId: 1 });
+OrderSchema.index({ organizationId: 1, date: -1 });
+OrderSchema.index({ organizationId: 1, cashierId: 1 });
+OrderSchema.index({ organizationId: 1, status: 1 });
+OrderSchema.index({ organizationId: 1, 'items.hsCode': 1 });
 OrderSchema.index({ userPhone: 1 });
-OrderSchema.index({ date: -1 });
-OrderSchema.index({ cashierId: 1 });
-OrderSchema.index({ status: 1 });
-OrderSchema.index({ 'items.hsCode': 1 });
 
 const Order = mongoose.model("Order", OrderSchema);
 module.exports = { Order };

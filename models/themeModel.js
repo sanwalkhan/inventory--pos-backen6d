@@ -2,10 +2,9 @@ const mongoose = require("mongoose");
 
 const ThemeSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
     primaryColor: { type: String, required: true },
     secondaryColor: { type: String, required: true },
-
     mainSectionBackground: { type: String, required: true, default: "#ffffff" },
     subSectionBackground: { type: String, required: true, default: "#f3f4f6" },
     cardColor: { type: String, required: true, default: "#ffffff" },
@@ -25,8 +24,18 @@ const ThemeSchema = new mongoose.Schema(
     sidebarLinkHoverBackground: { type: String, required: true, default: "#374151" },
     sidebarActiveBackground: { type: String, required: true, default: "#2563eb" },
     sidebarActiveLinkColor: { type: String, required: true, default: "#ffffff" },
+     organizationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Organization",
+        required: function() {
+          return true;
+        }
+      }
   },
-  { timestamps: true }
+ 
+    
+  { timestamps: true },
+
 );
 
 module.exports = mongoose.model("Theme", ThemeSchema);

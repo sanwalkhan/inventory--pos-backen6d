@@ -1,7 +1,7 @@
 const User = require("../models/userModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-
+const { getOrganizationId } = require("../middleware/authmiddleware");
 const { jwtConfig } = require("../config");
 
 // Helper to verify JWT and return decoded user or respond error
@@ -14,80 +14,103 @@ function verifyTokenFromHeader(req, res) {
   const token = authHeader.split(" ")[1];
   try {
     const decoded = jwt.verify(token, jwtConfig.secret);
-    return decoded; // { userId, username, role }
+    return decoded; // { userId, username, role, organizationId }
   } catch (error) {
     res.status(403).json({ message: "Invalid or expired token" });
     return null;
   }
 }
 
+// Get organization ID from request
+function getRequestOrganizationId(req, decoded) {
+  return req.organizationId || decoded.organizationId || getOrganizationId(req);
+}
+
 // Roles that managers can access/manage (excluding admin and manager roles)
 const allowedManagerRoles = ["supervisor", "cashier"];
 
 /**
- * Get all users based on current user's role
- * Admin: can see manager, supervisor, cashier (excluding themselves and other admins)
- * Manager: can see supervisor, cashier only
+ * Get all users based on current user's role and organization
  */
 const getUsers = async (req, res) => {
   const decoded = verifyTokenFromHeader(req, res);
   if (!decoded) return;
 
-  if (decoded.role === "admin") {
-    try {
+  const organizationId = getRequestOrganizationId(req, decoded);
+  
+  if (!organizationId) {
+    return res.status(400).json({ message: "Organization ID is required" });
+  }
+
+  try {
+    let roleFilter = {};
+    let excludeSelf = { _id: { $ne: decoded.userId } };
+
+    if (decoded.role === "admin") {
       // Admin sees manager, supervisor, cashier roles (excluding themselves)
-      const users = await User.find(
-        { 
-          role: { $in: ["manager", "supervisor", "cashier"] },
-          _id: { $ne: decoded.userId }
-        },
-        "-password"
-      ).lean();
-      res.json({ users });
-    } catch (error) {
-      console.error("Fetch users error:", error);
-      res.status(500).json({ message: "Server error" });
-    }
-  } else if (decoded.role === "manager") {
-    try {
+      roleFilter = { role: { $in: ["manager", "supervisor", "cashier"] } };
+    } else if (decoded.role === "manager") {
       // Manager sees supervisor and cashier roles only
-      const users = await User.find({ 
-        role: { $in: allowedManagerRoles },
-        _id: { $ne: decoded.userId }
-      }, "-password").lean();
-      res.json({ users });
-    } catch (error) {
-      console.error("Fetch users error:", error);
-      res.status(500).json({ message: "Server error" });
+      roleFilter = { role: { $in: allowedManagerRoles } };
+    } else {
+      return res.status(403).json({ message: "Forbidden: Admins or Managers only" });
     }
-  } else {
-    res.status(403).json({ message: "Forbidden: Admins or Managers only" });
+
+    const users = await User.find(
+      { 
+        organizationId,
+        ...roleFilter,
+        ...excludeSelf
+      },
+      "-password"
+    ).lean();
+
+    res.json({ 
+      users,
+      organizationId,
+      total: users.length
+    });
+  } catch (error) {
+    console.error("Fetch users error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
 /**
- * Get user by ID with permission checks
+ * Get user by ID with permission checks and organization isolation
  */
 const getUserById = async (req, res) => {
   const decoded = verifyTokenFromHeader(req, res);
   if (!decoded) return;
 
+  const organizationId = getRequestOrganizationId(req, decoded);
   const userId = req.params.id;
+
+  if (!organizationId) {
+    return res.status(400).json({ message: "Organization ID is required" });
+  }
+
   try {
-    const user = await User.findById(userId, "-password").lean();
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findOne({ 
+      _id: userId, 
+      organizationId 
+    }, "-password").lean();
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found in your organization" });
+    }
 
     // Allow users to access their own profile regardless of role
     if (decoded.userId === userId) {
       return res.json(user);
     }
     
-    // Admin can access all users
+    // Admin can access all users in their organization
     if (decoded.role === "admin") {
       return res.json(user);
     }
     
-    // Manager can access users with allowed roles only
+    // Manager can access users with allowed roles only in their organization
     if (decoded.role === "manager") {
       if (!allowedManagerRoles.includes(user.role)) {
         return res.status(403).json({ message: "Forbidden: Manager access denied" });
@@ -104,16 +127,28 @@ const getUserById = async (req, res) => {
 };
 
 /**
- * Update user with role-based permissions
+ * Update user with role-based permissions and organization isolation
  */
 const updateUser = async (req, res) => {
   const decoded = verifyTokenFromHeader(req, res);
   if (!decoded) return;
 
+  const organizationId = getRequestOrganizationId(req, decoded);
   const userId = req.params.id;
+
+  if (!organizationId) {
+    return res.status(400).json({ message: "Organization ID is required" });
+  }
+
   try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findOne({ 
+      _id: userId, 
+      organizationId 
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found in your organization" });
+    }
 
     // Permission checks
     let canUpdate = false;
@@ -170,33 +205,50 @@ const updateUser = async (req, res) => {
     if (role && canChangeRole) user.role = role;
 
     await user.save();
-    res.json({ message: "User updated successfully" });
+    
+    res.json({ 
+      message: "User updated successfully",
+      userId: user._id
+    });
   } catch (error) {
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
-      return res.status(400).json({ message: `${field} already exists` });
+      return res.status(400).json({ 
+        message: `${field} already exists in this organization` 
+      });
     }
     console.error("Update user error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
 
-
 /**
- * Delete user with permission checks
+ * Delete user with permission checks and organization isolation
  */
 const deleteUser = async (req, res) => {
   const decoded = verifyTokenFromHeader(req, res);
   if (!decoded) return;
 
+  const organizationId = getRequestOrganizationId(req, decoded);
+  const userId = req.params.id;
+
+  if (!organizationId) {
+    return res.status(400).json({ message: "Organization ID is required" });
+  }
+
   if (decoded.role !== "admin" && decoded.role !== "manager") {
     return res.status(403).json({ message: "Forbidden: Admins or Managers only" });
   }
 
-  const userId = req.params.id;
   try {
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findOne({ 
+      _id: userId, 
+      organizationId 
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found in your organization" });
+    }
 
     // Users cannot delete themselves
     if (decoded.userId === userId) {
@@ -210,8 +262,15 @@ const deleteUser = async (req, res) => {
       }
     }
 
-    await User.findByIdAndDelete(userId);
-    res.json({ message: "User deleted successfully" });
+    await User.findOneAndDelete({ 
+      _id: userId, 
+      organizationId 
+    });
+
+    res.json({ 
+      message: "User deleted successfully",
+      deletedUserId: userId
+    });
   } catch (error) {
     console.error("Delete user error:", error);
     res.status(500).json({ message: "Server error" });
@@ -219,11 +278,17 @@ const deleteUser = async (req, res) => {
 };
 
 /**
- * Create new user with role-based permissions
+ * Create new user with role-based permissions and organization isolation
  */
 const createUser = async (req, res) => {
   const decoded = verifyTokenFromHeader(req, res);
   if (!decoded) return;
+
+  const organizationId = getRequestOrganizationId(req, decoded);
+
+  if (!organizationId) {
+    return res.status(400).json({ message: "Organization ID is required" });
+  }
 
   if (decoded.role !== "admin" && decoded.role !== "manager") {
     return res.status(403).json({ message: "Forbidden: Admins or Managers only" });
@@ -255,33 +320,44 @@ const createUser = async (req, res) => {
   }
 
   try {
-    // Check if user already exists
-    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    // Check if user already exists in this organization
+    const existingUser = await User.findOne({ 
+      $or: [{ email }, { username }],
+      organizationId 
+    });
+
     if (existingUser) {
       return res.status(400).json({ 
-        message: "User with this email or username already exists" 
+        message: "User with this email or username already exists in your organization" 
       });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
+    // Create new user with organization ID
     const newUser = new User({
       username,
       email,
       password: hashedPassword,
-      role
+      role,
+      organizationId,
+      createdBy: decoded.userId
     });
 
     await newUser.save();
-    res.status(201).json({ message: "User created successfully" });
+
+    res.status(201).json({ 
+      message: "User created successfully",
+      userId: newUser._id,
+      username: newUser.username,
+      role: newUser.role
+    });
   } catch (error) {
     if (error.code === 11000) {
-      // Duplicate key error
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({ 
-        message: `${field === 'email' ? 'Email' : 'Username'} already exists` 
+        message: `${field === 'email' ? 'Email' : 'Username'} already exists in this organization` 
       });
     }
     console.error("Create user error:", error);
@@ -290,29 +366,40 @@ const createUser = async (req, res) => {
 };
 
 /**
- * Get user statistics based on current user's role
+ * Get user statistics based on current user's role and organization
  */
 const getUserStats = async (req, res) => {
   const decoded = verifyTokenFromHeader(req, res);
   if (!decoded) return;
+
+  const organizationId = getRequestOrganizationId(req, decoded);
+
+  if (!organizationId) {
+    return res.status(400).json({ message: "Organization ID is required" });
+  }
 
   if (decoded.role !== "admin" && decoded.role !== "manager") {
     return res.status(403).json({ message: "Forbidden: Admins or Managers only" });
   }
 
   try {
-    let query = {};
+    let roleQuery = {};
     
     if (decoded.role === "admin") {
       // Admin sees manager, supervisor, cashier
-      query = { role: { $in: ["manager", "supervisor", "cashier"] } };
+      roleQuery = { role: { $in: ["manager", "supervisor", "cashier"] } };
     } else if (decoded.role === "manager") {
       // Manager sees supervisor, cashier
-      query = { role: { $in: allowedManagerRoles } };
+      roleQuery = { role: { $in: allowedManagerRoles } };
     }
 
     const stats = await User.aggregate([
-      { $match: query },
+      { 
+        $match: { 
+          organizationId,
+          ...roleQuery
+        } 
+      },
       {
         $group: {
           _id: "$role",
@@ -325,7 +412,8 @@ const getUserStats = async (req, res) => {
       total: 0,
       manager: 0,
       supervisor: 0,
-      cashier: 0
+      cashier: 0,
+      organizationId
     };
 
     stats.forEach(stat => {
@@ -340,7 +428,34 @@ const getUserStats = async (req, res) => {
   }
 };
 
+/**
+ * Get current user profile (for any authenticated user)
+ */
+const getMyProfile = async (req, res) => {
+  const decoded = verifyTokenFromHeader(req, res);
+  if (!decoded) return;
 
+  try {
+    const user = await User.findById(decoded.userId, "-password").lean();
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({
+      userId: user._id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      organizationId: user.organizationId,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+  } catch (error) {
+    console.error("Get profile error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 module.exports = { 
   getUsers, 
@@ -349,5 +464,5 @@ module.exports = {
   deleteUser, 
   createUser,
   getUserStats,
-
+  getMyProfile
 };

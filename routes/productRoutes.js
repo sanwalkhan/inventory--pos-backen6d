@@ -14,24 +14,25 @@ const {
   getProductWithStock,
   countEachProductOrder,
 } = require("../controllers/productController")
+const {authenticateToken} = require("../middleware/authmiddleware")
 
 // GET routes
-productRouter.get("/products", getProducts)
-productRouter.get("/productswithstock", getProductWithStock)
-productRouter.get("/products/search", getproductByname)
-productRouter.get("/products/barcode", getProductByBarcode)
-productRouter.get("/productsSubcategories", getProductsBySubCategory)
-productRouter.get("/products/subcategory/:subcategoryId", getProductsModel)
-productRouter.get("/products/productsCategories", getProductBycategory)
-productRouter.get("/counteachproductorder", countEachProductOrder)
+productRouter.get("/products",authenticateToken, getProducts)
+productRouter.get("/productswithstock",authenticateToken, getProductWithStock)
+productRouter.get("/products/search",authenticateToken, getproductByname)
+productRouter.get("/products/barcode",authenticateToken, getProductByBarcode)
+productRouter.get("/productsSubcategories",authenticateToken, getProductsBySubCategory)
+productRouter.get("/products/subcategory/:subcategoryId",authenticateToken, getProductsModel)
+productRouter.get("/products/productsCategories",authenticateToken, getProductBycategory)
+productRouter.get("/counteachproductorder",authenticateToken, countEachProductOrder)
 
 // POST route - accepts both multipart (file) and JSON (URL) requests
-productRouter.post("/products", upload.single("image"), addProduct)
+productRouter.post("/products",authenticateToken, upload.single("image"), addProduct)
 
 // PUT route - accepts both multipart (file) and JSON (URL) requests
-productRouter.put("/products/:id", upload.single("image"), updateProduct)
+productRouter.put("/products/:id",authenticateToken, upload.single("image"), updateProduct)
 
 // DELETE route
-productRouter.delete("/products/:id", deleteProduct)
+productRouter.delete("/products/:id",authenticateToken, deleteProduct)
 
 module.exports = productRouter

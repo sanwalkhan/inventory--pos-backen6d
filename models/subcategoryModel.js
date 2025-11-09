@@ -5,7 +5,6 @@ const subcategorySchema = new mongoose.Schema(
     subcategoryName: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
     category: {
@@ -16,7 +15,6 @@ const subcategorySchema = new mongoose.Schema(
     hsCode: {
       type: String,
       required: true,
-      unique: true,
       match: [/^\d{4}\.\d{4}$/, "HS Code must be in format XXXX.XXXX (8 digits total)"],
       trim: true,
     },
@@ -106,13 +104,22 @@ const subcategorySchema = new mongoose.Schema(
       enum: ["file", "url"],
       default: "file",
     },
+    organizationId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Organization",
+          required: function() {
+            return true;
+          }
+        },
     imagePublicId: {
       type: String,
     },
   },
   { timestamps: true },
 )
-
+// In subcategoryModel.js
+subcategorySchema.index({ subcategoryName: 1, organizationId: 1 }, { unique: true });
+subcategorySchema.index({ hsCode: 1, organizationId: 1 }, { unique: true });
 const Subcategory = mongoose.model("Subcategory", subcategorySchema)
 
 module.exports = { Subcategory }

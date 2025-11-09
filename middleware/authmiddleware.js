@@ -61,5 +61,43 @@ const authorize = (...roles) => {
     next();
   };
 };
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"]
+  const token = authHeader && authHeader.split(" ")[1] // Extract token from "Bearer TOKEN"
 
-module.exports = { authenticate, authorize };
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: "No token provided",
+    })
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET)
+    req.user = decoded // This sets req.user so your controller can access it
+    next()
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired token",
+      error: error.message,
+    })
+  }
+}
+const getOrganizationId = (req) => {
+  const authHeader = req.headers.authorization
+  if (!authHeader) {
+    throw new Error("No token provided")
+  }
+
+  const token = authHeader.split(" ")[1]
+  const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key")
+ 
+  if (!decoded.organizationId) {
+    throw new Error("Invalid token: organizationId not found")
+  }
+
+  return decoded.organizationId
+}
+
+module.exports = { authenticate, authorize, authenticateToken, getOrganizationId };

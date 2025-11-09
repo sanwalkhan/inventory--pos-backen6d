@@ -5,7 +5,6 @@ const ProductSchema = new mongoose.Schema(
     name: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
     quantity: {
@@ -19,7 +18,6 @@ const ProductSchema = new mongoose.Schema(
     barcode: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
     sellingPriceWithoutDiscount: {
@@ -144,6 +142,13 @@ const ProductSchema = new mongoose.Schema(
     image: {
       type: String,
     },
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      required: function () {
+        return true
+      },
+    },
     imagePublicId: {
       type: String,
     },
@@ -169,7 +174,8 @@ ProductSchema.virtual("savingsAmount").get(function () {
 // Include virtuals when converting to JSON
 ProductSchema.set("toJSON", { virtuals: true })
 ProductSchema.set("toObject", { virtuals: true })
-
+ProductSchema.index({ name: 1, organizationId: 1 }, { unique: true });
+ProductSchema.index({ barcode: 1, organizationId: 1 }, { unique: true });
 const Products = mongoose.model("Products", ProductSchema)
 
 module.exports = { Products }

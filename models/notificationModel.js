@@ -44,7 +44,7 @@ const notificationSchema = new mongoose.Schema({
   // Related entities
   cashierId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Users',
+    ref: 'User',
     required: true
   },
   cashierName: {
@@ -55,6 +55,13 @@ const notificationSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'CashierDailySession',
     default: null
+  },
+  organizationId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Organization",
+    required: function () {
+      return true;
+    },
   },
   recipientId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -77,7 +84,7 @@ const notificationSchema = new mongoose.Schema({
   },
   readBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Users',
+    ref: 'User',
     default: null
   },
   // Additional data that might be useful
@@ -112,7 +119,7 @@ const notificationSchema = new mongoose.Schema({
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Users',
+    ref: 'User',
     default: null
   }
 }, {

@@ -1,6 +1,7 @@
-const Subcategory = require("../models/subcategoryModel").Subcategory
+const { Subcategory } = require("../models/subcategoryModel")
 const Category = require("../models/categoryModel")
 const cloudinary = require("cloudinary").v2
+const { getOrganizationId } = require("../middleware/authmiddleware")
 
 // ADD SUBCATEGORY
 const addSubcategory = async (req, res) => {
@@ -18,14 +19,16 @@ const addSubcategory = async (req, res) => {
       imageUrl = "",
     } = req.body
     const { id: categoryId } = req.params
+    const organizationId = req.organizationId || getOrganizationId(req)
 
-    // Check category existence
-    const category = await Category.findById(categoryId)
+    const category = await Category.findOne({
+      _id: categoryId,
+      organizationId,
+    })
     if (!category) {
       return res.status(404).json({ message: "Category not found" })
     }
 
-    // Validate subcategory name
     if (!name || name.trim().length === 0) {
       return res.status(400).json({ message: "Subcategory name is required" })
     }
@@ -35,26 +38,24 @@ const addSubcategory = async (req, res) => {
       })
     }
 
-    // Check for duplicate subcategory name (case-insensitive)
     const existingName = await Subcategory.findOne({
+      organizationId,
       subcategoryName: { $regex: new RegExp(`^${name}$`, "i") },
     })
     if (existingName) {
       return res.status(400).json({ message: "Subcategory name already exists" })
     }
 
-    // Validate subcategory HS code (4 digits)
     if (!hsCode || hsCode.length !== 4 || !/^\d{4}$/.test(hsCode)) {
       return res.status(400).json({
         message: "Subcategory HS code must be exactly 4 digits",
       })
     }
 
-    // Create full HS code
     const fullHsCode = `${category.hsCode}.${hsCode}`
 
-    // Check if full HS code already exists
     const existingSubcategory = await Subcategory.findOne({
+      organizationId,
       hsCode: fullHsCode,
     })
     if (existingSubcategory) {
@@ -63,7 +64,6 @@ const addSubcategory = async (req, res) => {
       })
     }
 
-    // Validate numeric fields
     const salesTaxNum = Number.parseFloat(salesTax)
     const customDutyNum = Number.parseFloat(customDuty)
     const withholdingTaxNum = Number.parseFloat(withholdingTax)
@@ -88,22 +88,19 @@ const addSubcategory = async (req, res) => {
     let imagePublicId = ""
     let imageSource = "file"
 
+    // Make image optional
     if (req.file) {
-      // File upload via Cloudinary
       image = req.file.path
       imagePublicId = req.file.filename
       imageSource = "file"
     } else if (imageUrl && imageUrl.trim()) {
-      // Direct URL input
       image = imageUrl.trim()
       imageSource = "url"
-    } else {
-      return res.status(400).json({
-        message: "Either image file or image URL is required",
-      })
     }
+    // If no image provided, empty strings will be used (optional)
 
     const subcategory = new Subcategory({
+      organizationId,
       subcategoryName: name.trim(),
       category: categoryId,
       hsCode: fullHsCode,
@@ -131,14 +128,9 @@ const addSubcategory = async (req, res) => {
     console.error("Error adding subcategory:", error.message)
 
     if (error.code === 11000) {
-      if (error.keyPattern.subcategoryName) {
-        return res.status(400).json({
-          message: "Subcategory name already exists",
-        })
-      }
-      if (error.keyPattern.hsCode) {
-        return res.status(400).json({ message: "HS code already exists" })
-      }
+      return res.status(400).json({
+        message: "Duplicate entry. Please use unique values.",
+      })
     }
 
     res.status(500).json({ message: "Server error" })
@@ -149,9 +141,13 @@ const addSubcategory = async (req, res) => {
 const getSubcategoriesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.params
+    const organizationId = req.organizationId || getOrganizationId(req)
+
     const subcategories = await Subcategory.find({
       category: categoryId,
+      organizationId,
     }).populate("category")
+
     res.status(200).json({ success: true, subcategories })
   } catch (error) {
     console.error("Error retrieving subcategories:", error.message)
@@ -162,7 +158,12 @@ const getSubcategoriesByCategory = async (req, res) => {
 // GET ALL SUBCATEGORIES
 const getSubcategories = async (req, res) => {
   try {
-    const subcategories = await Subcategory.find().populate("category")
+    const organizationId = req.organizationId || getOrganizationId(req)
+
+    const subcategories = await Subcategory.find({
+      organizationId,
+    }).populate("category")
+
     res.status(200).json({
       message: "Subcategories retrieved successfully",
       subcategories,
@@ -189,13 +190,17 @@ const updateSubcategory = async (req, res) => {
       imageUrl = "",
     } = req.body
     const { id } = req.params
+    const organizationId = req.organizationId || getOrganizationId(req)
 
-    const subcategory = await Subcategory.findById(id).populate("category")
+    const subcategory = await Subcategory.findOne({
+      _id: id,
+      organizationId,
+    }).populate("category")
+
     if (!subcategory) {
       return res.status(404).json({ message: "Subcategory not found" })
     }
 
-    // Validate name if provided
     if (subcategoryName !== undefined) {
       if (!subcategoryName.trim()) {
         return res.status(400).json({
@@ -208,8 +213,8 @@ const updateSubcategory = async (req, res) => {
         })
       }
 
-      // Case-insensitive duplicate check excluding current one
       const duplicateName = await Subcategory.findOne({
+        organizationId,
         subcategoryName: { $regex: new RegExp(`^${subcategoryName}$`, "i") },
         _id: { $ne: id },
       })
@@ -220,11 +225,11 @@ const updateSubcategory = async (req, res) => {
       }
     }
 
-    // Handle HS code updates
     let fullHsCode = subcategory.hsCode
     if (hsCode && /^\d{4}$/.test(hsCode)) {
       fullHsCode = `${subcategory.category.hsCode}.${hsCode}`
       const existing = await Subcategory.findOne({
+        organizationId,
         hsCode: fullHsCode,
         _id: { $ne: id },
       })
@@ -239,7 +244,6 @@ const updateSubcategory = async (req, res) => {
       })
     }
 
-    // Validate numeric fields
     const numericCheck = (val, field) => {
       const num = Number.parseFloat(val)
       if (isNaN(num) || num < 0 || num > 100) {
@@ -270,8 +274,8 @@ const updateSubcategory = async (req, res) => {
       },
     }
 
+    // Handle image updates - optional
     if (req.file) {
-      // Delete old Cloudinary image if it was a file upload
       if (subcategory.imagePublicId && subcategory.imageSource === "file") {
         await cloudinary.uploader.destroy(subcategory.imagePublicId)
       }
@@ -279,7 +283,6 @@ const updateSubcategory = async (req, res) => {
       updateData.imagePublicId = req.file.filename
       updateData.imageSource = "file"
     } else if (imageUrl && imageUrl.trim()) {
-      // Update with new URL
       if (subcategory.imagePublicId && subcategory.imageSource === "file") {
         await cloudinary.uploader.destroy(subcategory.imagePublicId)
       }
@@ -287,8 +290,11 @@ const updateSubcategory = async (req, res) => {
       updateData.imagePublicId = ""
       updateData.imageSource = "url"
     }
+    // If no image provided in update, keep existing image
 
-    const updatedSubcategory = await Subcategory.findByIdAndUpdate(id, updateData, { new: true }).populate("category")
+    const updatedSubcategory = await Subcategory.findByIdAndUpdate(id, updateData, {
+      new: true,
+    }).populate("category")
 
     res.status(200).json({
       message: "Subcategory updated successfully",
@@ -300,14 +306,9 @@ const updateSubcategory = async (req, res) => {
       return res.status(400).json({ message: error.message })
     }
     if (error.code === 11000) {
-      if (error.keyPattern.subcategoryName) {
-        return res.status(400).json({
-          message: "Subcategory name already exists",
-        })
-      }
-      if (error.keyPattern.hsCode) {
-        return res.status(400).json({ message: "HS code already exists" })
-      }
+      return res.status(400).json({
+        message: "Duplicate entry. Please use unique values.",
+      })
     }
     res.status(500).json({ message: "Server error" })
   }
@@ -317,7 +318,12 @@ const updateSubcategory = async (req, res) => {
 const deleteSubcategory = async (req, res) => {
   try {
     const { id } = req.params
-    const subcategory = await Subcategory.findById(id)
+    const organizationId = req.organizationId || getOrganizationId(req)
+
+    const subcategory = await Subcategory.findOne({
+      _id: id,
+      organizationId,
+    })
     if (!subcategory) {
       return res.status(404).json({ message: "Subcategory not found" })
     }

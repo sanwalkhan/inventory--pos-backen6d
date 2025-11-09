@@ -12,8 +12,7 @@ const {
 // GET all subcategories
 subcategoryRouter.get("/subcategories", getSubcategories)
 
-// GET subcategories by category
-subcategoryRouter.get("/subcategories/category/:categoryId", getSubcategoriesByCategory)
+
 
 // For file upload: use multipart/form-data with image file
 // For URL: use application/json with imageUrl field

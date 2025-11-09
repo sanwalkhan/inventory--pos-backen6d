@@ -40,7 +40,6 @@ const SupplierSchema = new mongoose.Schema({
   email: { 
     type: String, 
     required: true,
-    unique: true,
     trim: true,
     lowercase: true,
     match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
@@ -49,16 +48,23 @@ const SupplierSchema = new mongoose.Schema({
     type: String, 
     required: true,
     trim: true,
-    unique: true,
    
   },
+  organizationId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Organization",
+        required: function () {
+          return true
+        },
+      },
   address: { type: String, trim: true },
   orders: [OrderSchema],
   totalDues: { type: Number, default: 0 },
   totalOrders: { type: Number, default: 0 },
   totalPurchased: { type: Number, default: 0 },
   lastOrderDate: { type: Date },
-  isActive: { type: Boolean, default: true }
+  isActive: { type: Boolean, default: true },
+
 }, { 
   timestamps: true 
 });
@@ -75,5 +81,8 @@ SupplierSchema.pre('save', function(next) {
   
   next();
 });
+
+SupplierSchema.index({ email: 1, organizationId: 1 }, { unique: true });
+SupplierSchema.index({ mobile: 1, organizationId: 1 }, { unique: true });
 
 module.exports = mongoose.model('Supplier', SupplierSchema);
