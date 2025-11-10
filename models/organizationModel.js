@@ -7,6 +7,7 @@ const organizationSchema = new mongoose.Schema(
       required: [true, "Organization name is required"],
       trim: true,
       maxlength: [100, "Organization name cannot exceed 100 characters"],
+      unique: true,
     },
     isActive: {
       type: Boolean,

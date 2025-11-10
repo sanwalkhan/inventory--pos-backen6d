@@ -1290,6 +1290,7 @@ const getBestProductByDate = async (req, res) => {
   }
 }
 
+
 module.exports = {
   getSalesSummary,
   getTopProductsByPeriod,

@@ -90,6 +90,7 @@ const currencyRouter = require("./routes/currencyRoutes");
 const NotificationRouter = require("./routes/notificationRoutes");
 const chatbotRouter = require("./routes/chatbotRoutes");
 const logorouter = require("./routes/logoRoutes");
+const orgnazationRouter = require("./routes/organizationRoutes")
 
 // --- Register Routes ---
 app.use("/api", NotificationRouter);
@@ -118,6 +119,7 @@ app.use("/api", resetPasswordRouter);
 app.use("/api", currencyRouter);
 app.use("/api/chatbot", chatbotRouter);
 app.use("/api",logorouter)
+app.use("/api",orgnazationRouter)
 
 // --- PeerJS integrated on same port ---
 const peerServer = ExpressPeerServer(server, {
