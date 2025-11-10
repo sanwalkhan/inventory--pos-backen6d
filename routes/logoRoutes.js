@@ -2,7 +2,7 @@ const express = require("express")
 const logorouter = express.Router()
 const { upload } = require("../config/logoCloudinary")
 const logoController = require("../controllers/logoController")
-const { authenticateToken } = require("../middleware/authMiddleware")
+const { authenticateToken } = require("../middleware/authmiddleware")
 
 // Routes
 // GET - Fetch current logo (no auth needed)
