@@ -51,12 +51,13 @@ const customer = async (req, res) => {
         price: item.price,
         quantity: item.quantity,
         originalQuantity: item.originalQuantity || item.quantity,
+        organizationId: organizationId, // ADD THIS LINE
       })),
       cashierId,
       cashierName,
       paymentMethod: latestOrder.paymentMethod || "cash",
       totalAmount: totalAmount,
-      organizationId: organizationId, // ADD THIS LINE
+      organizationId: organizationId,
     }
 
     console.log("📝 Purchase entry:", JSON.stringify(purchaseEntry, null, 2))
@@ -293,6 +294,7 @@ const refund = async (req, res) => {
         category: custOrderItem.category || orderItem.category || "Uncategorized",
         barcode: custOrderItem.barcode || orderItem.barcode || "",
         sellingPrice: custOrderItem.price,
+        organizationId: organizationId, // ADD THIS LINE
       })
     }
 
@@ -311,6 +313,7 @@ const refund = async (req, res) => {
       customerId: customer._id,
       customerName: customer.name,
       customerPhone: customer.phone,
+      organizationId: organizationId, // ADD THIS LINE
     }
 
     for (const refundItem of refundItems) {
@@ -372,6 +375,15 @@ const refund = async (req, res) => {
       order.originalTotalPrice = order.totalPrice
     }
 
+    // FIX: Ensure all order items have organizationId before saving
+    order.items = order.items.map(item => {
+      const itemObj = item.toObject ? item.toObject() : item;
+      return {
+        ...itemObj,
+        organizationId: itemObj.organizationId || organizationId
+      };
+    });
+
     order.totalPrice = order.items.reduce((sum, item) => {
       const price = Number(item.sellingPrice)
       const qty = Number(item.quantity)
@@ -403,10 +415,15 @@ const refund = async (req, res) => {
       items: validatedRefundItems.map((item) => ({
         ...item,
         hsCode: item.hsCode || "N/A",
+        organizationId: organizationId, // ADD THIS LINE
       })),
     }
 
     order.refundHistory.push(orderRefundEntry)
+
+    // Mark fields as modified
+    order.markModified('items')
+    order.markModified('refundHistory')
 
     try {
       await customer.save()
@@ -430,6 +447,19 @@ const refund = async (req, res) => {
 
     if (err.name === "ValidationError") {
       console.error("Validation errors:", err.errors)
+      
+      // Check specifically for organizationId validation errors
+      const organizationIdErrors = Object.keys(err.errors).filter(key => 
+        key.includes('organizationId')
+      );
+      
+      if (organizationIdErrors.length > 0) {
+        return res.status(400).json({
+          error: "Organization ID validation failed",
+          details: "One or more items are missing organization identification"
+        })
+      }
+      
       return res.status(400).json({
         error: "Validation failed",
         details: Object.keys(err.errors).map((key) => ({
