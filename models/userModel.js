@@ -46,6 +46,28 @@ const userSchema = new mongoose.Schema(
       type: String,
       maxlength: [100, "Refund password cannot exceed 100 characters"],
     },
+      otp: {
+    code: String,
+    expiresAt: Date,
+    attempts: {
+      type: Number,
+      default: 0
+    }
+  },
+  otpRequests: [{
+    timestamp: {
+      type: Date,
+      default: Date.now
+    },
+    count: {
+      type: Number,
+      default: 1
+    }
+  }],
+  verified: {
+    type: Boolean,
+    default: false
+  }
   },
   {
     timestamps: true,

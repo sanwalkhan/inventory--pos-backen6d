@@ -184,6 +184,7 @@ const addUser = async (req, res) => {
       role: role || "cashier",
       organizationId: organizationId,
       active: active !== undefined ? active : true,
+      verified:true,
       permissions: permissions || [],
     }
 

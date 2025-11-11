@@ -90,7 +90,8 @@ const currencyRouter = require("./routes/currencyRoutes");
 const NotificationRouter = require("./routes/notificationRoutes");
 const chatbotRouter = require("./routes/chatbotRoutes");
 const logorouter = require("./routes/logoRoutes");
-const orgnazationRouter = require("./routes/organizationRoutes")
+const orgnazationRouter = require("./routes/organizationRoutes");
+const { cleanupUnverifiedUsers } = require("./controllers/authController");
 
 // --- Register Routes ---
 app.use("/api", NotificationRouter);
@@ -148,6 +149,17 @@ cron.schedule(
       new Date().toLocaleString("en-PK", { timeZone: "Asia/Karachi" })
     );
     await sendDailySalesReportEmail();
+  },
+  { timezone: "Asia/Karachi" }
+);
+cron.schedule(
+  "0 2 * * *",
+  async () => {
+    console.log(
+      "Running Daily Sales Report Job at",
+      new Date().toLocaleString("en-PK", { timeZone: "Asia/Karachi" })
+    );
+    await cleanupUnverifiedUsers();
   },
   { timezone: "Asia/Karachi" }
 );
