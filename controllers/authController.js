@@ -1,6 +1,6 @@
 const User = require("../models/userModel");
 const Organization = require("../models/organizationModel");
-const OTP = require("../models/otpModel");
+const OTP = require("../models/otpmodel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
